@@ -50,7 +50,11 @@ if ($UpdateTest) {
     if ($FromSetup) {
         Write-Host "== Update-Test: installiert wird $(Split-Path $FromSetup -Leaf), im Kanal liegt $version"
         & (Join-Path $root 'build.ps1') -Release -SkipTests
-        Sign-Into-Channel $built $version '- Update-Test in der Windows Sandbox'
+        # Dieselben Notizen wie beim Veroeffentlichen (publish_release.ps1) - der Test zeigt, was Nutzer sehen werden
+        $changelog = [IO.File]::ReadAllText((Join-Path $root 'CHANGELOG.md'), $utf8)
+        $m = [regex]::Match($changelog, "(?ms)^## $([regex]::Escape($version))[ \t]*\r?\n(.*?)(?=^## |\z)")
+        $notes = if ($m.Success -and $m.Groups[1].Value.Trim()) { $m.Groups[1].Value.Trim() } else { '- Update-Test in der Windows Sandbox' }
+        Sign-Into-Channel $built $version $notes
     } else {
         $testVersion = "$version.1"   # vierstellig: neuer als $version, aber nie eine echte Release-Nummer
         Write-Host "== Update-Test: zuerst Testversion $testVersion fuer den Kanal, danach $version zum Installieren"

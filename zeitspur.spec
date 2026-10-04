@@ -20,10 +20,13 @@ ICON = str(ROOT / "assets" / "zeitspur.ico")
 UI = ROOT / "zeitspur" / "timeline_ui"
 BUILD_MCP_EXE = os.environ.get("ZEITSPUR_BUILD_MCP_EXE", "0") == "1"
 
-# Release-Build (build.ps1 -Release): Funktionen, die noch nicht fertig sind, werden gar nicht erst eingepackt -
-# derzeit die Standort-Historie (Dawarich) samt Kartenbibliothek. zeitspur/edition.py erkennt das zur Laufzeit.
+# Release-Build (build.ps1 -Release): gleicher Inhalt wie der eigene Build - seit 0.4.0 samt Standort-Spur
+# (Dawarich, Windows-Standort) und Karte. Unterschied ist allein der Update-Kanal (release_channel.txt).
+# Soll eine unfertige Funktion einmal nicht mit, gehoert ihr Modul nach RELEASE_EXCLUDES; zeitspur/edition.py
+# erkennt das zur Laufzeit.
 RELEASE = os.environ.get("ZEITSPUR_EDITION", "") == "release"
-RELEASE_EXCLUDES = ["zeitspur.dawarich"] if RELEASE else []
+LOCATION_MODULES = ["zeitspur.dawarich", "zeitspur.location", "zeitspur.windows_location"]
+RELEASE_EXCLUDES: list[str] = []
 
 # Update-Kanal: Nur der Release-Build bringt release_channel.txt mit und aktualisiert sich selbst
 # (zeitspur/edition.py, updater.py). Die Datei entsteht hier im Arbeitsordner - nie im Quelltext, sonst
@@ -37,8 +40,7 @@ if RELEASE:
 
 ui_datas = [(str(UI / name), "zeitspur/timeline_ui") for name in ("index.html", "style.css", "app.js")]
 # Leaflet wird mitgeliefert, damit die Karte kein CDN braucht (Kacheln kommen erst zur Laufzeit).
-if not RELEASE:
-    ui_datas += [(str(UI / "vendor" / n), "zeitspur/timeline_ui/vendor") for n in ("leaflet.js", "leaflet.css")]
+ui_datas += [(str(UI / "vendor" / n), "zeitspur/timeline_ui/vendor") for n in ("leaflet.js", "leaflet.css")]
 runtime_datas = collect_data_files("pythonnet") + collect_data_files("clr_loader")
 runtime_bins = collect_dynamic_libs("pythonnet") + collect_dynamic_libs("clr_loader")
 mcp_datas = (collect_data_files("mcp") + collect_data_files("mcp_types") + collect_data_files("jsonschema")
@@ -53,7 +55,7 @@ plugin_hidden = ["zeitspur." + m for m in ("credentials", "httpclient", "eventlo
                                            "browser_history", "ics_calendar", "outlook_mail", "git_commits",
                                            "github_activity", "pc_times", "wifi")] \
     + ["recurring_ical_events", "x_wr_timezone", "dateutil.rrule", "win32evtlog", "tzdata"] \
-    + collect_submodules("icalendar")
+    + collect_submodules("icalendar") + LOCATION_MODULES
 plugin_datas = collect_data_files("tzdata") + collect_data_files("icalendar")
 excludes_common = ["tkinter", "matplotlib", "numpy", "scipy", "pandas", "PyQt5", "PyQt6", "PySide2", "PySide6",
                    "gi", "cefpython3", "IPython", "jupyter", "notebook", "pytest", "PyInstaller"]

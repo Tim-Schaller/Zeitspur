@@ -2,8 +2,8 @@
 #   .\build.ps1                    kompletter Build, Ergebnis dist\ZeitspurSetup.exe
 #   .\build.ps1 -SkipTests         ohne Testlauf
 #   .\build.ps1 -SkipInstaller     nur dist\Zeitspur\ erzeugen
-#   .\build.ps1 -Release           Release-Ausgabe fuer andere: ohne unfertige Funktionen (derzeit
-#                                  Standort-Historie/Karte), Ergebnis dist-release\ZeitspurSetup.exe.
+#   .\build.ps1 -Release           Release-Ausgabe fuer andere: gleicher Inhalt, aber mit Update-Kanal,
+#                                  Ergebnis dist-release\ZeitspurSetup.exe.
 #                                  Eigene Ordner, damit der normale Build daneben unberuehrt bleibt.
 [CmdletBinding()]   # unbekannte Argumente sind ein Fehler, statt still ignoriert zu werden
 param(
@@ -63,14 +63,15 @@ try {
 
 $channel = Join-Path $appDir '_internal\zeitspur\release_channel.txt'
 if ($Release) {
-    # Waechter: Was im Release fehlen soll, darf nicht doch im Paket stecken (etwa weil ein neuer Import
-    # das Modul hereinzieht). Dann lieber gar kein Release als ein falscher.
-    Write-Host '== Release-Waechter: keine Standort-Historie, keine Kartenbibliothek im Paket?'
-    $verboten = Get-ChildItem $appDir -Recurse -File | Where-Object { $_.Name -match '^(dawarich|leaflet)\.' }
-    if ($verboten) { throw ('Im Release-Paket gefunden: ' + (($verboten | ForEach-Object Name) -join ', ')) }
+    # Waechter: Der Release enthaelt alle Plugins samt Standort-Spur und Karte - fehlt davon etwas (etwa weil ein
+    # Import nur noch bedingt erfolgt), lieber gar kein Release als ein unvollstaendiger.
+    Write-Host '== Release-Waechter: Standort-Spur, Dawarich, Windows-Standort und Karte im Paket?'
+    $noetig = 'zeitspur\location.pyc', 'zeitspur\dawarich.pyc', 'zeitspur\windows_location.pyc', 'zeitspur\timeline_ui\vendor\leaflet.js'
+    $fehlt = $noetig | Where-Object { -not (Test-Path (Join-Path $appDir "_internal\$_")) }
+    if ($fehlt) { throw ('Im Release-Paket fehlt: ' + ($fehlt -join ', ')) }
     if (-not (Test-Path $channel)) { throw 'Release-Paket ohne release_channel.txt - es wuerde sich nie selbst aktualisieren' }
 } elseif (Test-Path $channel) {
-    # Der eigene Build (mit Standort-Historie) darf sich nie durch ein Release ersetzen
+    # Der eigene Build darf sich nie durch ein Release ersetzen
     throw 'Eigener Build enthaelt release_channel.txt - er wuerde sich durch Releases ersetzen'
 }
 
@@ -92,7 +93,6 @@ Copy-Item (Join-Path $root 'installer\tesseract-portable') $tessDst -Recurse
 Write-Host '== Lizenzen (LICENSE.txt, THIRD-PARTY-NOTICES.txt)'
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $appDir 'LICENSE.txt') -Force
 $noticeArgs = @((Join-Path $root 'tools\third_party_notices.py'), '--out', (Join-Path $appDir 'THIRD-PARTY-NOTICES.txt'))
-if ($Release) { $noticeArgs += '--release' }
 & $py @noticeArgs
 if ($LASTEXITCODE) { throw 'third_party_notices.py fehlgeschlagen' }
 

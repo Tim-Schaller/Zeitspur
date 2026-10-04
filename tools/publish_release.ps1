@@ -48,7 +48,9 @@ if (-not $built -or $built.LastWriteTime -lt $buildStart) { throw 'dist-release\
 if ($built.VersionInfo.ProductVersion.Trim() -ne $version) { throw "Setup hat Version $($built.VersionInfo.ProductVersion), erwartet $version" }
 $package = Join-Path $root 'dist-release\Zeitspur'
 if (-not (Test-Path (Join-Path $package '_internal\zeitspur\release_channel.txt'))) { throw 'Keine Release-Ausgabe (Update-Kanal fehlt)' }
-if (Get-ChildItem $package -Recurse -File | Where-Object { $_.Name -match '^(dawarich|leaflet)\.' }) { throw 'Standort-Historie im Release-Paket' }
+foreach ($teil in 'zeitspur\location.pyc', 'zeitspur\dawarich.pyc', 'zeitspur\windows_location.pyc', 'zeitspur\timeline_ui\vendor\leaflet.js') {
+    if (-not (Test-Path (Join-Path $package "_internal\$teil"))) { throw "Release-Paket unvollstaendig: $teil fehlt" }
+}
 
 $out = Join-Path $root 'dist-release\publish'
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue

@@ -76,7 +76,15 @@ def find_repos(folders: list[str], max_depth: int = MAX_DEPTH) -> list[Path]:
     return unique
 
 
+# Neutralisiert angreiferkontrollierte Einstellungen eines geklonten Fremd-Repos (Hooks, Pager, fsmonitor,
+# externe Protokolle), egal welcher Subbefehl spaeter dazukommt - Defense-in-Depth.
+_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=", "-c", "core.pager=cat",
+           "-c", "protocol.allow=never", "-c", "safe.bareRepository=explicit"]
+
+
 def _run(args: list[str]) -> str:
+    if args:
+        args = [args[0], *_HARDEN, *args[1:]]
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
     flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if sys.platform == "win32" else 0
     result = subprocess.run(args, capture_output=True, timeout=TIMEOUT_S, env=env, creationflags=flags,

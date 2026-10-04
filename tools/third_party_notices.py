@@ -5,7 +5,7 @@ sind - Name, Version, Lizenz und der vollstaendige Text ihrer Lizenzdateien. Daz
 nicht aus pip stammen (Python selbst, Tesseract, Leaflet, WebView2-Bootstrapper, PyInstaller-Bootloader).
 build.ps1 ruft das nach jedem PyInstaller-Lauf auf; die Datei landet im Programmordner.
 
-  python tools/third_party_notices.py --out dist\\Zeitspur\\THIRD-PARTY-NOTICES.txt [--release]
+  python tools/third_party_notices.py --out dist\\Zeitspur\\THIRD-PARTY-NOTICES.txt
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def _section(title: str, body: str) -> str:
     return f"{'=' * 100}\n{title}\n{'=' * 100}\n\n{body.strip()}\n\n"
 
 
-def build(release: bool) -> str:
+def build() -> str:
     parts = ["Zeitspur - Lizenzen der mitgelieferten Komponenten\n\n"
              "Zeitspur selbst steht unter der MIT-Lizenz mit Commons-Clause-Zusatz (LICENSE.txt). Die folgenden\n"
              "Bestandteile behalten ihre eigenen Lizenzen. pystray, recurring-ical-events und x-wr-timezone\n"
@@ -85,9 +85,8 @@ def build(release: bool) -> str:
                           "Ordner tesseract\\ im Programmverzeichnis. https://github.com/tesseract-ocr/tesseract\n\n"
                           + (tesseract.read_text(encoding="utf-8", errors="replace") if tesseract.exists()
                              else "https://www.apache.org/licenses/LICENSE-2.0")))
-    if not release:
-        leaflet = ROOT / "zeitspur" / "timeline_ui" / "vendor" / "LICENSE-leaflet.txt"
-        parts.append(_section("Leaflet 1.9.4 - BSD 2-Clause", leaflet.read_text(encoding="utf-8")))
+    leaflet = ROOT / "zeitspur" / "timeline_ui" / "vendor" / "LICENSE-leaflet.txt"
+    parts.append(_section("Leaflet 1.9.4 - BSD 2-Clause", leaflet.read_text(encoding="utf-8")))
     parts.append(_section("Microsoft Edge WebView2 Evergreen Bootstrapper",
                           "Nur im Setup enthalten und nur ausgefuehrt, wenn die WebView2-Runtime fehlt. Unveraendert "
                           "weitergegeben gemaess Microsofts Verteilungsbedingungen fuer WebView2:\n"
@@ -111,9 +110,8 @@ def build(release: bool) -> str:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--out", required=True)
-    p.add_argument("--release", action="store_true", help="Release-Ausgabe (ohne Leaflet)")
     args = p.parse_args()
-    text = build(args.release)
+    text = build()
     Path(args.out).write_text(text, encoding="utf-8")
     print(f"{args.out}: {text.count('=' * 100) // 2} Abschnitte, {len(text) // 1024} KB")
 

@@ -189,7 +189,8 @@ def test_get_entry_and_screenshot(seeded):
 def test_reader_errors_without_setup(tmp_path, monkeypatch):
     tools = ActivityTools(ActivityReader(Config(db_path=str(tmp_path / "missing.db"))))
     ctx = tools.get_time_context()
-    assert "database" in ctx and "existiert noch nicht" in ctx["database"]
+    # Gehaertet: nur generisches Signal an das Modell, kein DB-Pfad / keine Krypto-Fehlerdetails.
+    assert ctx.get("database") == "nicht verfügbar"
     with pytest.raises(RuntimeError):
         tools.search_activity("x")
 
@@ -476,9 +477,11 @@ def test_get_activity_at_names_a_known_place(tmp_path, key):
     loc = res["location"]
     assert loc["place"] == "Buero" and loc["kind"] == "Aufenthalt" and loc["covers_timestamp"] is True
     assert loc["coordinates"]  # Koordinaten bleiben zusaetzlich erhalten
-    # der Aufenthalt traegt im Kalender ebenfalls den Namen
-    visit = next(e for e in res["calendar"] if e["source"] == "dawarich")
+    # der Aufenthalt erscheint im Kalender als Teil der Standort-Spur - mit Namen, nicht als Rohbeleg
+    assert not any(e["source"] == "dawarich" for e in res["calendar"])
+    visit = next(e for e in res["calendar"] if e["source"] == "standort" and e["category"] == "Aufenthalt")
     assert visit["subject"] == "Buero" and visit["place"] == "Buero"
+    assert visit["details"]["sources"] == ["GPS (Dawarich)"]
     # und der Outlook-Termin steht daneben, damit beides in einer Antwort kombiniert werden kann
     assert any("Beispiel AG" in e["subject"] for e in res["calendar"])
     assert any("Visual Studio" in (b.get("window_title") or "") for b in res["blocks"])
@@ -489,7 +492,7 @@ def test_get_activity_at_keeps_unknown_place_honest(tmp_path, key):
     tools, _ = _seed_location_day(tmp_path, key, 48.1371, 11.5754)  # Muenchen, nicht konfiguriert
     loc = tools.get_activity_at("2026-09-09 09:00", window_minutes=30, include_text=False)["location"]
     assert loc["place"] is None
-    assert loc["coordinates"] == "48.1371, 11.5754"
+    assert loc["coordinates"] == "48.13710, 11.57540"
 
 
 def test_get_activity_at_without_location_data(seeded):

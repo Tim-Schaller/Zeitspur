@@ -68,6 +68,9 @@ def test_nicht_installiertes_plugin_wird_nicht_synchronisiert(storage, monkeypat
         def __init__(self, creds):
             called.append(creds)
 
+        def points_available(self):
+            return False
+
         def fetch(self, start, end):
             return []
 
@@ -199,6 +202,9 @@ def test_dawarich_sync_writes_events(storage, monkeypatch):
         def __init__(self, creds):
             pass
 
+        def points_available(self):   # Server ohne /api/v1/points: Dawarichs eigene Aufenthalte und Fahrten
+            return False
+
         def fetch(self, start, end):
             return [LocationEvent(ext_id="visit-1", ts_start=T(9), ts_end=T(10),
                                   subject="Aufenthalt (52.50000, 13.40000)", location="52.50000, 13.40000",
@@ -220,6 +226,9 @@ def test_dawarich_failure_does_not_stop_other_sources(storage, monkeypatch):
         def __init__(self, creds):
             pass
 
+        def points_available(self):   # Server ohne /api/v1/points: Dawarichs eigene Aufenthalte und Fahrten
+            return False
+
         def fetch(self, start, end):
             raise DawarichError("Der Dawarich-Server ist gerade nicht erreichbar (502).")
 
@@ -236,6 +245,9 @@ def test_unerwarteter_fehler_eines_plugins_stoppt_die_anderen_nicht(storage, mon
     class Kaputt:
         def __init__(self, creds):
             pass
+
+        def points_available(self):   # Server ohne /api/v1/points: Dawarichs eigene Aufenthalte und Fahrten
+            return False
 
         def fetch(self, start, end):
             raise RuntimeError("Fehler im Plugin")

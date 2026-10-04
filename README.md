@@ -228,7 +228,7 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `max_db_size_gb` | `20` | Größendeckel; darüber werden die ältesten Tage zuerst gelöscht |
 | `min_free_disk_gb` | `2` | unterhalb dieses freien Speichers pausiert die Aufnahme |
 | `log_level` | `INFO` | `DEBUG` protokolliert deutlich mehr (Neustart nötig) |
-| `installed_plugins` | `[]` | hinzugefügte Plugins (`outlook`, `teams`, `teams_local`, `dawarich`); verwaltet über Einstellungen → Plugins (siehe Plugins) |
+| `installed_plugins` | `[]` | hinzugefügte Plugins (`outlook`, `teams`, `teams_local`, `wifi`, `dawarich`, `windows_location` …); verwaltet über Plugins (siehe Plugins) |
 | `teams_user_id` | `""` | Teams-Plugin: Azure-AD-Objekt-Id des Nutzers → nur **eigene** Anrufe (leer ⇒ Teams-Sync wird übersprungen) |
 | `teams_user_names` | `[]` | Teams-Plugin: Anzeigenamen als Rückfall, falls in einem Anruf keine Objekt-Id, aber ein Name steht |
 | `map_enabled` | `false` | Karte im Zeitstrahl; **einzige** Stelle, die Daten aus dem Internet lädt |
@@ -366,7 +366,8 @@ Bildschirmaufnahme, Texterkennung, Datenbank und Zeitstrahl sind keine Plugins.
 | GitHub | Entwicklung | GitHub-Ereignisse | optional Token | Entwicklung |
 | PC-Zeiten | PC & Netzwerk | System-Ereignisprotokoll | – | PC |
 | WLAN-Netze | PC & Netzwerk | WLAN-Ereignisprotokoll | – | Orte |
-| Standort-Historie (Dawarich) | Orte | eigene Dawarich-Instanz | Token | Orte (nur im selbst gebauten Programm) |
+| Standort-Historie (Dawarich) | Orte | GPS vom Handy über die eigene Dawarich-Instanz | Token | Orte |
+| Windows-Standort | Orte | Ortung von Windows | – | Orte |
 
 Alle Ereignisse landen verschlüsselt in derselben Datenbank, werden nach `retention_days` mitgelöscht und stehen
 über den MCP-Server bereit (`get_calendar` sowie das Feld `calendar` in `get_activity_at`/`list_active_apps`,
@@ -557,14 +558,68 @@ Sicherheitsprotokoll, das ohne Adminrechte nicht lesbar ist – sie fehlen desha
 Plugin `wifi` liest aus dem WLAN-Protokoll, mit welchem Funknetz der PC wann verbunden war. Kurze Unterbrechungen
 im selben Netz (Standby, Funkloch) werden zu einer Verbindung zusammengefasst. Mit Zuordnungen wie
 `Firma-WLAN = Büro` wird daraus ein **Ortshinweis ohne GPS**: Der Eintrag heißt dann „Büro (WLAN Firma-WLAN)“,
-und Claude darf sagen „du warst im Büro“. Kabelverbindungen erscheinen nicht.
+und Claude darf sagen „du warst im Büro“. Groß-/Kleinschreibung, Leer- und Bindestriche im Netznamen zählen nicht
+(`Firma-WLAN` trifft auch `FirmaWLAN`); ein Netz, das nichts über den Ort sagt – etwa der Hotspot des Handys –,
+lässt sich mit `Handy-Hotspot = -` ausnehmen. Kabelverbindungen erscheinen nicht. Das WLAN fließt in die
+[Standort-Spur](#standort-spur-wo-war-ich-wann) ein.
+
+### Standort-Spur: wo war ich wann?
+
+Die Zeile **„Orte“** im Zeitstrahl ist eine **lückenlose Leiste**: „07:58–12:05 Büro“, „🚗 18 min → Zuhause“,
+„18:20–23:10 Zuhause“ – Aufenthalt, Fahrt, Aufenthalt, ohne Überlappungen. Zeitspur führt dafür alle
+Ortsquellen zusammen, die Sie installiert haben:
+
+| Quelle | weiß gut | weiß nicht |
+|---|---|---|
+| Standort-Historie (Dawarich) | wo **Sie** sind (Handy-GPS), Fahrten mit Strecke | nichts, wenn das Handy schweigt |
+| WLAN-Netze | wo der **PC** ist (mit Zuordnung „Netzname = Ort“) | wo Sie sind, wenn der PC zu Hause bleibt |
+| Windows-Standort | Koordinaten des **PCs**, auch ohne Zuordnung | unterwegs nichts (der PC ist dann aus) |
+
+Jede Quelle reicht allein: Wer kein Handy-GPS möchte, bekommt die Leiste auch nur aus WLAN oder Windows-Standort.
+
+So entsteht die Leiste:
+
+* Widersprechen sich Quellen, gewinnt die verlässlichere: GPS-Aufenthalte vor GPS-Fahrten vor WLAN bei wachem
+  PC vor Windows-Standort vor WLAN im Standby. Das Handy beim Kunden schlägt den Laptop, der zu Hause im WLAN
+  hängt.
+* Derselbe Ort heißt überall gleich: Koordinaten im Radius eines bekannten Orts, gleiche Namen aus WLAN und
+  Dawarich (Rechtsformen wie „GmbH“ zählen nicht) und unbenannte Koordinaten, die lange mit einem benannten
+  WLAN zusammenfallen, werden ein Ort. Namen aus Dawarich gelten auch an Tagen, an denen Dawarich sie nicht
+  nennt.
+* **Lücken werden erschlossen, nicht erfunden:** Zwischen zwei Belegen am selben Ort ohne Fahrt war man dort;
+  bis zur nächsten Abfahrt und ab der Ankunft ebenso (das Handy meldet sich im Stillstand selten). Zwischen zwei
+  verschiedenen Orten mit bis zu zwei Stunden Abstand steht eine nicht aufgezeichnete Fahrt. Alles darüber
+  hinaus heißt **„Ort unbekannt“**. Erschlossene Teile sind **schraffiert** – die Leiste ist lückenlos, aber
+  ehrlich.
+* Kurze „Fahrten“ vom Ort zum selben Ort (Parkplatz, GPS-Zittern) und Halte unter drei Minuten mitten in einer
+  Fahrt verschwinden.
+
+Ein Klick auf die Leiste oder der Knopf **„Orte“** oben öffnet den **Tagesablauf**: chronologisch, mit Dauer,
+Entfernung und Quelle je Abschnitt, daneben (wenn eingeschaltet) die Karte. Dort lässt sich jeder Ort
+**benennen** – mit Koordinaten wird daraus ein bekannter Ort (Radius 150 m), ohne Koordinaten eine
+WLAN-Zuordnung. Das wirkt sofort und rückwirkend, auch für Claude.
+
+Claude bekommt die Leiste statt der einzelnen Belege: In `get_calendar` und im Feld `calendar` stehen
+Abschnitte mit `source: "standort"` und der Kategorie „Aufenthalt“, „Fahrt“ oder „Ort unbekannt“, unter
+`details` die Quellen und – falls erschlossen – wie viel davon ohne Messung ist. `get_activity_at` liefert im
+Feld `location` den Abschnitt zum Zeitpunkt (`place`, `coordinates`, `kind`, Zeitraum, `inferred`).
 
 ### Standort-Historie (Dawarich)
 
-Plugin `dawarich`. Zeitspur liest aus einer **eigenen** Dawarich-Instanz zwei schreibgeschützte
-Endpunkte: `/api/v1/visits` (erkannte Aufenthalte) und `/api/v1/tracks` (Fahrten als GeoJSON). Beides
-erscheint als Marker auf dem Zeitstrahl und über den MCP-Server — damit lässt sich Bildschirmaktivität
-einem Ort zuordnen („Was habe ich gemacht, als ich in Hamburg war?“).
+Plugin `dawarich`. Zeitspur liest aus einer **eigenen** Dawarich-Instanz die GPS-Punkte Ihres Handys
+(`/api/v1/points`) und berechnet daraus selbst Aufenthalte (mindestens 5 Minuten im Umkreis von 120 m) und die
+Fahrten dazwischen – mit Strecke, Entfernung und, wo es eindeutig ist, der Fortbewegungsart (über 40 km/h Auto,
+unter 8 km/h zu Fuß). Dawarichs eigene Aufenthalte (`/api/v1/visits`) liefern nur noch die Namen.
+
+Die Punkte werden je Tag abgeholt und verschlüsselt in der eigenen Datenbank gespeichert. Abgeschlossene Tage
+holt der nächste Abgleich nicht erneut; heute und Tage, für die das Handy noch Punkte nachliefern könnte (bis
+sechs Stunden nach Tagesende), schon. Zwischen zwei Anfragen liegt gut eine Sekunde – Dawarich erlaubt 60 je
+Minute.
+
+**Steht ein Proxy vor Dawarich**, muss er `/api/v1/points` und `/api/v1/visits` durchlassen. Fehlt
+`/api/v1/points` (404), fällt Zeitspur auf Dawarichs eigene Aufenthalte und Fahrten (`/api/v1/tracks`) zurück –
+dann mit deren Schwächen: Lücken, Orte ohne Koordinaten, „Fahrten“ über einen ganzen Arbeitstag. „Speichern &
+testen“ sagt, welcher Weg gilt.
 
 Einrichtung: Plugins (oben rechts) → Standort-Historie (Dawarich) → „Hinzufügen“, Basis-Adresse und
 Token eintragen und „Speichern & testen“ wählen.
@@ -580,29 +635,23 @@ Token eintragen und „Speichern & testen“ wählen.
 
 **Was gespeichert wird**
 
-| Art | Betreff | Ort |
-|---|---|---|
-| Aufenthalt | Name des Ortes, sonst `Aufenthalt (52.51627, 13.37770)` | Koordinaten |
-| Fahrt | `Fahrt - 26,4 km` (nur wenn plausibel) | `52.51627, 13.37770 nach 52.39146, 13.06684` |
+| Art | Inhalt |
+|---|---|
+| GPS-Punkt | Zeit, Breite, Länge, Genauigkeit (Tabelle `location_points`, gelöscht nach `retention_days`) |
+| Aufenthalt | Koordinaten, Name aus Dawarich (falls vorhanden) |
+| Fahrt | Start, Ziel, Entfernung, Strecke vereinfacht (höchstens 500 Punkte, Abweichung unter ~10 m) |
 
 **Eigenheiten, die bewusst so behandelt werden**
 
-* **Ortsnamen fehlen derzeit meist** (Dawarich ohne eingerichtete Ortsauflösung). Dann nennt Zeitspur
-  ehrlich die Koordinaten, statt eine Adresse zu raten.
-* Aufenthalte mit Status `declined` hat der Nutzer verworfen — sie werden übersprungen.
-* Die Einheit von `distance` ist seitens Dawarich **nicht zugesichert**. Meter werden angenommen, aber nur
-  übernommen, wenn das Ergebnis plausibel ist (höchstens 2000 km und 400 km/h). Sonst erscheint die Fahrt
-  ohne Entfernung — lieber keine Angabe als eine falsche. Der Rohwert steht weiterhin in `extra`.
-* Die Dauer wird aus Start und Ende gerechnet, nicht aus dem `duration`-Feld — dessen Einheit ist ebenfalls
-  unbestätigt.
-* Aufenthalte filtert der Server nach `started_at`. Ein Aufenthalt, der vor dem Fenster begann und
-  hineinreicht, fiele damit weg; deshalb fragt Zeitspur mit **7 Tagen Vorlauf** ab und filtert selbst
-  auf Überlappung.
-* GeoJSON liefert `[Längengrad, Breitengrad]` — genau umgekehrt zur üblichen Schreibweise; das wird beim
-  Einlesen gedreht.
-* Höchstens **60 Anfragen pro Minute**: Zeitspur fragt große Zeiträume am Stück ab statt viele kleine.
+* Ungenaue Punkte (über 200 m, Funkzelle) und einzelne Ausreißer (weit weg und sofort zurück) fliegen raus.
+* Meldet sich das Handy stundenlang nicht, bleibt der Aufenthalt bestehen; Funkstille über drei Stunden wird
+  als erschlossen markiert.
+* Aufenthalte mit Status `declined` hat der Nutzer verworfen – ihr Name wird nicht verwendet.
+* Im Rückfall ohne Rohpunkte: Die Einheit von `distance` ist seitens Dawarich nicht zugesichert; eine
+  Entfernung erscheint nur, wenn sie plausibel ist. Ganztages-Tracks werden an ihren Motorabschnitten in
+  einzelne Fahrten zerlegt.
 * Ist der Dawarich-Server nicht erreichbar (502/504 oder TLS-Fehler), meldet der Sync das und **stoppt die
-  anderen Quellen nicht** — Outlook und Teams laufen weiter.
+  anderen Quellen nicht**.
 
 **Wenn der Abruf fehlschlägt — erst hier nachsehen**
 
@@ -615,17 +664,29 @@ Token eintragen und „Speichern & testen“ wählen.
   gültiges Zertifikat; das gehört auf dem Server behoben. Ein Umweg über HTTP oder eine abgeschaltete
   Zertifikatsprüfung kommt **nicht** in Frage – der Token wäre sonst mitlesbar. Ein Test
   (`test_certificate_verification_is_never_disabled`) hält das fest.
-* **Ein leeres Ergebnis heißt „nichts aufgezeichnet“, nicht „Fehler“.** Vor der ersten längeren Fahrt
-  liefern beide Endpunkte leere Listen.
+* **Ein leeres Ergebnis heißt „nichts aufgezeichnet“, nicht „Fehler“.**
+
+### Windows-Standort
+
+Plugin `windows_location`. Fragt alle paar Minuten (einstellbar, Standard 5)
+die Ortung von Windows, wo der PC gerade ist – nur solange er wach ist und die Aufnahme läuft. Nach dem
+Aufwachen wartet es eine Minute, bis Windows neu geortet hat; Messungen ungenauer als 500 m werden verworfen.
+Daraus entstehen Aufenthalte für die Standort-Spur, auch ohne Handy und ohne WLAN-Zuordnung.
+
+Voraussetzung: Windows-Einstellungen → Datenschutz und Sicherheit → Position: „Ortungsdienste“ und
+„Desktop-Apps den Zugriff auf Ihren Standort erlauben“. Zeitspur liest die Position über
+`System.Device.Location` aus dem .NET Framework – keine zusätzliche Bibliothek. **Ehrlich gesagt:** Für die
+Ortung über WLAN fragt Windows selbst den Ortungsdienst von Microsoft; das tut Windows, sobald die Ortung
+eingeschaltet ist, auch ohne Zeitspur.
 
 ### Karte (OpenStreetMap)
 
 **Standardmäßig aus – und das ist die einzige Stelle, an der Zeitspur Daten aus dem Internet holt.**
 Einschalten unter Einstellungen (⚙) → „Karte anzeigen (lädt Kacheln aus dem Netz)“.
 
-Ist sie an und enthält der Tag Aufenthalte oder Fahrten, erscheint oben der Knopf **„Karte“**. Er öffnet
-eine Karte unter dem Zeitstrahl: Aufenthalte als Punkte, Fahrten als Linie mit Start- und Zielmarkierung.
-Ein Klick auf einen Eintrag in der Spur **„Orte“** springt auf der Karte direkt dorthin.
+Ist sie an, zeigt der Tagesablauf (Knopf **„Orte“**) neben der Liste eine Karte: Aufenthalte als Punkte in der
+Farbe ihrer Leiste, Fahrten als Linie, nicht aufgezeichnete Fahrten gestrichelt. Ein Klick auf einen Abschnitt
+– in der Leiste, in der Liste oder auf der Karte – hebt ihn überall hervor und rückt die Karte dorthin.
 
 **Was das kostet, ehrlich gesagt:** Kartenkacheln werden pro Bildausschnitt von `tile.openstreetmap.org`
 geladen. Der Kachel-Server erfährt dadurch, **welche Gegenden Sie sich ansehen**. Ihre Aufenthalte selbst
@@ -642,22 +703,19 @@ Technisch:
 * Die Namensnennung „© OpenStreetMap-Mitwirkende“ wird eingeblendet; das ist bei OSM-Daten (ODbL) Pflicht.
 * **Startpunkt:** Ohne Aufenthalte öffnet die Karte beim eingestellten Startpunkt – ab Werk mit Blick auf ganz
   Deutschland. Über `map_home_lat`, `map_home_lon`, `map_home_zoom` und `map_home_label` lässt sich ein eigener
-  Bezugspunkt setzen, etwa das Büro; mit Namen erscheint er als blauer Punkt. Sobald der Tag Aufenthalte oder
-  Fahrten enthält, rückt die Karte stattdessen auf diese Daten.
-* Für die Linie speichert Zeitspur die Strecke vereinfacht (Douglas-Peucker, höchstens 500 Punkte je
-  Fahrt, Abweichung unter ~10 m). Eine Fahrt mit 4000 Rohpunkten belegt so rund 10 KB statt ein Vielfaches.
+  Bezugspunkt setzen, etwa das Büro; mit Namen erscheint er als blauer Punkt.
 
-**Ortsnamen statt Koordinaten:** Die Beschriftung kommt aus dem `name`-Feld von Dawarich. Solange dort keine
-Ortsauflösung eingerichtet ist, bleibt sie leer und Zeitspur zeigt die Koordinaten – bewusst, statt eine
-Adresse zu raten. Richten Sie die Auflösung in Dawarich ein (z. B. Photon), erscheinen Straße, Ort und oft
-auch der Name des Betriebs automatisch; Zeitspur braucht dafür keine Änderung und fragt keinen fremden
-Dienst.
+**Ortsnamen ohne fremden Dienst:** Namen kommen aus Ihren bekannten Orten, Ihren WLAN-Zuordnungen und dem
+`name`-Feld von Dawarich. Richten Sie in Dawarich eine Ortsauflösung ein (z. B. Photon), erscheinen dort auch
+Straße und Betrieb; Zeitspur kürzt die Adresse („Supermarkt, Musterweg 2, Beispielstadt“) und fragt selbst
+keinen Geocoder.
 
 ### Bekannte Orte: aus Koordinaten werden Namen
 
 Damit Claude „Du warst im Büro“ sagen kann statt „Koordinaten 52.51627, 13.37770“, lassen sich Orte
-benennen. Ein benannter Kartenstartpunkt (`map_home_label`) zählt automatisch als bekannter Ort; weitere trägt
-man in den Einstellungen unter **„Bekannte Orte (je Zeile)“** ein:
+benennen – am einfachsten im Tagesablauf mit **„Benennen“** bzw. **„Umbenennen“**. Ein benannter
+Kartenstartpunkt (`map_home_label`) zählt automatisch als bekannter Ort; alle weiteren stehen in den
+Einstellungen unter **„Bekannte Orte (je Zeile)“**:
 
 ```
 Büro;52.5163;13.3777;200
@@ -666,22 +724,14 @@ Kunde Beispiel AG;53.5503;9.9920;300
 
 Format: `Name;Breite;Länge` und optional `;Radius in Metern` (Standard 150 m). Der Abstand wird als echte
 Entfernung gerechnet (Haversine), nicht als Koordinatendifferenz – sonst wäre der Radius abhängig vom
-Breitengrad. Liegt ein Aufenthalt im Radius mehrerer Orte, gewinnt der nächstgelegene.
+Breitengrad. Liegt ein Aufenthalt im Radius mehrerer Orte, gewinnt der nächstgelegene. Heißt ein WLAN-Ort
+genauso wie ein bekannter Ort („Büro“), bekommt er dessen Koordinaten.
 
-Wirkung an drei Stellen:
-
-* **Zeitstrahl:** Der Aufenthalt heißt „Büro“ statt der Koordinaten.
-* **MCP:** `get_activity_at` liefert zusätzlich ein Feld **`location`** mit `place` (benannter Ort oder
-  `null`), `coordinates`, `kind` („Aufenthalt“/„Fahrt“), Zeitraum und `covers_timestamp`.
-* **Antworten von Claude:** Die Server-Anweisung sagt ausdrücklich, Ort, Termin und Bildschirmarbeit zu
-  **einer** Aussage zu verbinden, etwa: „Du warst im Büro und hast in Visual Studio am Beispielprojekt
-  gearbeitet; laut Outlook lief parallel der Kundentermin mit der Beispiel AG.“
-
-**Ehrlich bleibt es trotzdem:** Ist der Ort nicht bekannt, steht `place: null` und es werden nur die
-Koordinaten genannt – geraten wird nichts. Liegen gar keine Standortdaten vor, fehlt `location` ganz und
-Claude sagt nichts über den Ort. Ein unbrauchbarer Eintrag in der Liste wird übersprungen (mit Protokoll-
-Hinweis) und verhindert nicht den Start; beim Speichern über die Einstellungen wird er dagegen sofort
-mit einer Fehlermeldung abgelehnt.
+**Ehrlich bleibt es trotzdem:** Ist der Ort nicht bekannt, heißt er „Unbenannter Ort“, Claude bekommt
+`place: null` und nennt nur die Koordinaten – geraten wird nichts. Liegen gar keine Standortdaten vor, fehlt
+`location` ganz und Claude sagt nichts über den Ort. Ein unbrauchbarer Eintrag in der Liste wird übersprungen
+(mit Protokoll-Hinweis) und verhindert nicht den Start; beim Speichern über die Einstellungen wird er dagegen
+sofort mit einer Fehlermeldung abgelehnt.
 
 ### Plaud
 
@@ -825,11 +875,13 @@ $env:ZEITSPUR_BUILD_MCP_EXE = "1"; .\build.ps1   # zusaetzlich separate Zeitspur
 .\build.ps1 -Release                       # Release-Ausgabe fuer andere -> dist-release\ZeitspurSetup.exe
 ```
 
-**Release-Ausgabe:** `build.ps1 -Release` packt Funktionen, die noch nicht fertig sind, gar nicht erst ein –
-derzeit die Standort-Historie (Dawarich) samt Karte und bekannten Orten. Das Programm erkennt selbst, was fehlt
-(`zeitspur/edition.py`), und blendet es aus; ein Wächter bricht den Build ab, falls doch etwas davon im Paket
-steckt. Die Ausgabe landet in eigenen Ordnern (`dist-release`, `build-release`), der normale Build bleibt
-unberührt. GitHub-Releases werden aus der Release-Ausgabe gebaut.
+**Release-Ausgabe:** `build.ps1 -Release` baut denselben Inhalt wie der normale Build – seit 0.4.0 mit allen
+Plugins samt Standort-Spur und Karte –, aber mit Update-Kanal: Nur die Release-Ausgabe aktualisiert sich selbst.
+Ein Wächter bricht den Build ab, wenn Standort-Spur oder Kartenbibliothek im Paket fehlen. Soll eine unfertige
+Funktion einmal nicht mit, gehört ihr Modul nach `RELEASE_EXCLUDES` in `zeitspur.spec`; das Programm erkennt
+dann selbst, was fehlt (`zeitspur/edition.py`), und blendet es aus. Die Ausgabe landet in eigenen Ordnern
+(`dist-release`, `build-release`), der normale Build bleibt unberührt. GitHub-Releases werden aus der
+Release-Ausgabe gebaut.
 
 ### Release veröffentlichen
 
@@ -913,7 +965,7 @@ Mitgelieferte Drittkomponenten behalten ihre Lizenzen. `build.ps1` legt sie samt
 Python (PSF), Tesseract OCR und die Sprachdaten `tessdata_fast` (Apache 2.0), SQLCipher über `sqlcipher3-wheels`
 (zlib), pywebview (BSD-3), pythonnet (MIT), mss (MIT), Pillow (MIT-CMU), psutil (BSD-3), PyYAML (MIT), pywin32
 (PSF), MCP-SDK (MIT), cryptography (Apache 2.0 oder BSD-3), **pystray (LGPL-3.0)** – es liegt unverändert als
-eigene Dateien unter `_internal\pystray` und lässt sich dort ersetzen – sowie im eigenen Build Leaflet (BSD-2,
+eigene Dateien unter `_internal\pystray` und lässt sich dort ersetzen – sowie Leaflet (BSD-2,
 `zeitspur/timeline_ui/vendor/LICENSE-leaflet.txt`).
 
 ## Projektmodule: Plugins

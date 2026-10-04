@@ -12,6 +12,7 @@ import hashlib
 import io
 import logging
 import os
+import secrets
 import threading
 from collections import OrderedDict
 from dataclasses import fields
@@ -64,28 +65,15 @@ def _event_geo(extra: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def format_event(e: dict[str, Any], places=None) -> dict[str, Any]:
-    """Rohes calendar_events-Row -> Anzeigeobjekt fuer Zeitstrahl/Detail.
-
-    `places` benennt bekannte Koordinaten ("Buero" statt "52.51627, 13.37770"); ist der Ort
-    unbekannt, bleiben die Koordinaten stehen - es wird keine Adresse geraten.
-    """
+def format_event(e: dict[str, Any]) -> dict[str, Any]:
+    """Rohes calendar_events-Row -> Anzeigeobjekt fuer Zeitstrahl/Detail."""
     source = e.get("source") or ""
     extra = _event_extra(e)
     direction = extra.get("direction")
     subject = e.get("subject") or "(ohne Betreff)"
-    place = None
-    if edition.LOCATIONS and source == "dawarich" and places and extra.get("latitude") is not None:
-        from ..dawarich import match_place
-
-        hit = match_place(extra.get("latitude"), extra.get("longitude"), places)
-        if hit is not None:
-            place = hit.name
-            if e.get("category") == "visit":
-                subject = hit.name
     show = plugins.display(source)
     return {
-        "geo": _event_geo(extra), "place": place, "lane": show["lane"],
+        "geo": _event_geo(extra), "lane": show["lane"],
         "id": e["id"], "source": source, "source_label": show["label"],
         "category": e.get("category"), "category_label": EVENT_CATEGORY_LABELS.get(e.get("category"), ""),
         "direction": direction, "direction_label": DIRECTION_LABELS.get(direction, ""),
@@ -114,10 +102,14 @@ def build_html() -> str:
         vendor = UI_DIR / "vendor"
         leaflet_css = (vendor / "leaflet.css").read_text(encoding="utf-8")
         leaflet_js = (vendor / "leaflet.js").read_text(encoding="utf-8")
+    # Frischer CSP-Nonce je Aufbau: nur die hier eingebetteten script/style-Tags tragen ihn, eingeschleustes
+    # Inline-JS nicht - so greift die CSP im index.html (zweite Verteidigungslinie gegen XSS).
+    nonce = secrets.token_urlsafe(16)
     return (html.replace("/*__LEAFLET_CSS__*/", leaflet_css)
                 .replace("/*__CSS__*/", css)
                 .replace("/*__LEAFLET_JS__*/", leaflet_js)
-                .replace("/*__JS__*/", js))
+                .replace("/*__JS__*/", js)
+                .replace("__NONCE__", nonce))
 
 
 # Kategoriale Palette der Aktivitaetsbloecke: sechs Plaetze, danach neutral ("Sonstige").
@@ -267,13 +259,22 @@ class Bridge:
         """Bekannte Orte aus der Konfiguration (bei jedem Aufruf frisch - Einstellungen aendern sich zur Laufzeit)."""
         if not edition.LOCATIONS:
             return []
-        from ..dawarich import places_from_config
+        from ..location import places_from_config
 
         try:
             return places_from_config(self._app.cfg)
         except Exception:
             log.debug("Bekannte Orte nicht lesbar", exc_info=True)
             return []
+
+    def _location_strip(self, store: ReadOnlyStorage, start: int, end: int) -> list[dict[str, Any]]:
+        """Die Standort-Spur des Tages: lueckenlos Ort -> Fahrt -> Ort, aus allen Ortsquellen zusammengefuehrt."""
+        from .. import location
+
+        segments = location.strip_from_store(
+            lambda a, b, sources, categories: store.events_between(a, b, sources=sources, categories=categories),
+            start, end, self._app.cfg)
+        return [location.segment_dict(seg) for seg in segments]
 
     def _store(self) -> ReadOnlyStorage:
         app = self._app
@@ -384,7 +385,19 @@ class Bridge:
             lane_active = sum(max(0, min(b["ts_end"], end) - max(b["ts_start"], start)) for b in blocks)
             active_ms = max(active_ms, lane_active)
             lanes.append({"monitor_id": monitor_id, "blocks": blocks})
-        events = [format_event(e, self._places()) for e in self._store().events_between(start, end)]
+        store = self._store()
+        events = [format_event(e) for e in store.events_between(start, end)]
+        strip: list[dict[str, Any]] = []
+        if edition.LOCATIONS:
+            # Die Ortsquellen erscheinen nicht einzeln (sie widersprechen und ueberlappen sich), sondern als
+            # eine zusammengefuehrte Standort-Spur.
+            from ..location import EVIDENCE_SOURCES
+
+            events = [e for e in events if e["source"] not in EVIDENCE_SOURCES]
+            try:
+                strip = self._location_strip(store, start, end)
+            except Exception:
+                log.exception("Standort-Spur konnte nicht berechnet werden")
         # Termine/Anrufe des Tages bei Bedarf frisch nachziehen (z. B. beim Blaettern in vergangene Tage)
         try:
             self._app.request_event_sync(d)
@@ -392,6 +405,7 @@ class Bridge:
             log.debug("request_event_sync fehlgeschlagen", exc_info=True)
         return {
             "date": d.isoformat(), "start_ms": start, "end_ms": end, "lanes": lanes, "events": events,
+            "location_strip": strip,
             "total_entries": len(rows), "active_ms": active_ms,
             "first_ms": min((r["ts_start"] for r in rows), default=None),
             "last_ms": max((r["ts_end"] for r in rows), default=None),
@@ -498,6 +512,11 @@ class Bridge:
         if not creds or not any(creds.values()):
             raise ValueError("Es sind keine Zugangsdaten hinterlegt.")
         return creds
+
+    def name_place(self, name: str, lat: Any = None, lon: Any = None, old_name: str | None = None,
+                   ssid: str | None = None) -> dict[str, Any]:
+        """Knopf "Ort benennen" in der Standort-Spur: Koordinaten (oder ein WLAN) bekommen einen Namen."""
+        return self._app.name_place(str(name or ""), lat=lat, lon=lon, old_name=old_name, ssid=ssid)
 
     def sync_events_now(self) -> dict[str, Any]:
         from datetime import date as _date

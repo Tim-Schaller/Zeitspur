@@ -78,9 +78,9 @@ $wvNachher = WebView2Version
 if ($wvNachher -and -not $wvVorher) { Ok "WebView2-Runtime vom Setup nachinstalliert ($wvNachher)" }
 elseif ($wvNachher) { Ok "WebView2-Runtime vorhanden ($wvNachher)" }
 else { Warn 'WebView2-Runtime fehlt weiterhin - Zeitspur bietet beim Start den Download an' }
-$fremd = Get-ChildItem $ordner -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(dawarich|leaflet)\.' }
-if ($fremd) { Warn ('Im Paket gefunden: ' + (($fremd | ForEach-Object Name) -join ', ')) }
-else { Ok 'Keine Standort-Historie im Paket (Release-Ausgabe)' }
+$standort = Get-ChildItem $ordner -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(dawarich|location|windows_location|leaflet)\.' }
+if ($standort.Count -ge 4) { Ok 'Standort-Spur, Dawarich, Windows-Standort und Karte im Paket' }
+else { Warn ('Standort-Funktionen unvollstaendig: ' + (($standort | ForEach-Object Name) -join ', ')) }
 
 Schritt 'Erster Start'
 Hinweis 'Zuerst erscheint ein kleines Startfenster mit laufendem Balken, danach das Hauptfenster mit der'

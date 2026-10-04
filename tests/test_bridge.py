@@ -131,7 +131,10 @@ def test_group_blocks_merges_consecutive_same_window():
 def test_build_html_inlines_assets():
     html = build_html()
     assert "/*__CSS__*/" not in html and "/*__JS__*/" not in html
-    assert "pywebviewready" in html and "<style>" in html and "http://" not in html.split("<body")[0]
+    assert "pywebviewready" in html and "<style nonce=" in html and "http://" not in html.split("<body")[0]
+    # CSP mit frischem Nonce eingesetzt, kein Platzhalter mehr uebrig.
+    assert "Content-Security-Policy" in html and "__NONCE__" not in html
+    assert build_html().split('nonce="')[1][:10] != html.split('nonce="')[1][:10]  # je Aufbau anders
 
 
 def test_coerce_config_from_form_values():
@@ -338,7 +341,8 @@ def test_plugin_bridge_methods_delegate(bridge):
     assert bridge.get_state()["installed_plugins"] == ["dawarich"]
     listed = {p["id"]: p for p in bridge.list_plugins()}
     assert set(listed) == {"outlook", "teams", "teams_local", "ics", "outlook_mail", "calls_local", "notifications",
-                           "browser_history", "git", "github", "pc_times", "wifi", "dawarich"}
+                           "browser_history", "git", "github", "pc_times", "wifi", "dawarich",
+                           "windows_location"}
     assert listed["dawarich"]["installed"] and not listed["teams"]["installed"]
     assert [f["key"] for f in listed["teams"]["setting_fields"]] == ["teams_user_id", "teams_user_names"]
     assert [f["kind"] for f in listed["dawarich"]["credential_fields"]] == ["text", "secret"]
@@ -457,11 +461,39 @@ def test_release_ausgabe_ohne_karte_und_orte(bridge, monkeypatch):
     assert "leafletjs.com" not in html and "/*__LEAFLET_JS__*/" not in html
     # Ein Standort-Ereignis aus einer frueheren Entwicklerversion darf nichts zum Absturz bringen
     ev = format_event({"id": 1, "source": "dawarich", "category": "visit", "ts_start": T0, "ts_end": T0 + 1000,
-                       "subject": "Aufenthalt", "extra": json.dumps({"latitude": 48.1, "longitude": 11.5})},
-                      places=["irgendein Ort"])
-    assert ev["place"] is None and ev["subject"] == "Aufenthalt"
+                       "subject": "Aufenthalt", "extra": json.dumps({"latitude": 48.1, "longitude": 11.5})})
+    assert ev["subject"] == "Aufenthalt"
 
 
 def test_entwicklerausgabe_meldet_ihre_funktionen(bridge):
     from zeitspur import edition
     assert bridge.get_state()["features"] == {"locations": edition.LOCATIONS, "updates": False}
+
+
+def test_get_day_zeigt_die_standort_spur_statt_der_rohbelege(bridge, storage):
+    """Die Ortsquellen erscheinen als EINE Leiste (Ort -> Fahrt -> Ort), nicht einzeln und ueberlappend."""
+    import json
+
+    from zeitspur import edition
+    if not edition.LOCATIONS:
+        pytest.skip("Ausgabe ohne Standort-Funktionen")
+    bridge._app.cfg.known_places = ["Büro;52.5;13.35"]
+    bridge._app.cfg.plugin_settings = {"wifi": {"places": ["Heimnetz = Zuhause"]}}
+    storage.replace_events("dawarich", T0 - 120 * MIN, T0 + 600 * MIN, [
+        {"ext_id": "v1", "ts_start": T0, "ts_end": T0 + 240 * MIN, "subject": "Aufenthalt", "category": "visit",
+         "extra": json.dumps({"latitude": 52.5, "longitude": 13.35})},
+        {"ext_id": "t1", "ts_start": T0 + 240 * MIN, "ts_end": T0 + 260 * MIN, "subject": "Fahrt", "category": "track",
+         "extra": json.dumps({"from": [52.5, 13.35], "to": [52.52, 13.405], "distance_km": 4.6})}])
+    storage.replace_events("wifi", T0 - 120 * MIN, T0 + 600 * MIN, [
+        {"ext_id": "w1", "ts_start": T0 + 262 * MIN, "ts_end": T0 + 400 * MIN, "subject": "WLAN: Heimnetz",
+         "category": "wifi", "extra": json.dumps({"ssid": "Heimnetz"})}])
+    storage.replace_events("outlook", T0 - 120 * MIN, T0 + 600 * MIN, [
+        {"ext_id": "m1", "ts_start": T0 + 30 * MIN, "ts_end": T0 + 60 * MIN, "subject": "Besprechung",
+         "category": "meeting", "extra": None}])
+    day = bridge.get_day("2026-09-09")
+    assert [e["source"] for e in day["events"]] == ["outlook"]          # Rohbelege nicht einzeln
+    unknown, *strip = day["location_strip"]
+    assert unknown["kind"] == "unknown" and unknown["end_label"] == "10:00"   # vorher keine Daten
+    assert [(s["kind"], s["label"]) for s in strip] == [("stay", "Büro"), ("trip", "Fahrt"), ("stay", "Zuhause")]
+    assert strip[0]["start_label"] == "10:00" and strip[1]["to"] == "Zuhause" and strip[1]["distance_label"] == "4,6 km"
+    assert strip[2]["sources"] == ["WLAN „Heimnetz“"]

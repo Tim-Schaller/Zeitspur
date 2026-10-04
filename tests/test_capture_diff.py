@@ -275,6 +275,33 @@ def test_capture_per_monitor_deny_skips_only_that_monitor(storage, monkeypatch):
     assert loop.state == CaptureState.RECORDING
 
 
+def test_capture_deny_matches_visible_window_below_top(storage, monkeypatch):
+    """Eine ausgeschlossene App, die sichtbar aber NICHT das oberste Fenster des Monitors ist, spart den
+    Monitor trotzdem aus (fruehere Luecke: nur das oberste/fokussierte Fenster wurde geprueft)."""
+    cfg = Config(capture_interval_seconds=5, change_threshold=0.01, excluded_process_regex=["KeePass.*"])
+    stop = threading.Event()
+    loop = CaptureLoop(cfg, storage, None, stop, start_delay=0)
+    mon1 = {"left": 0, "top": 0, "width": 1920, "height": 1080}
+    mon2 = {"left": 1920, "top": 0, "width": 1920, "height": 1080}
+    monkeypatch.setattr(loop, "_screenshots", lambda: [(1, mon1, screen((250, 250, 250))), (2, mon2, screen((10, 40, 90)))])
+    fg = winutil.WindowInfo(1, "Dokument - Word", 100, "WINWORD.EXE", None, (100, 100, 900, 700))
+    monkeypatch.setattr(loop, "current_foreground", lambda: fg)
+    # Oberstes Fenster auf Monitor 2 ist ein Browser - NICHT ausgeschlossen ...
+    browser = winutil.WindowInfo(2, "Seite - Firefox", 200, "firefox.exe", None, (1920, 0, 3840, 1080))
+    monkeypatch.setattr(winutil, "top_window_per_monitor", lambda monitors: {2: browser})
+    # ... aber darunter liegt sichtbar ein ausgeschlossenes KeePass-Fenster.
+    keepass = winutil.WindowInfo(2, "Tresor.kdbx - KeePass", 201, "KeePass.exe", None, (1960, 60, 3000, 900))
+    monkeypatch.setattr(winutil, "visible_windows_per_monitor", lambda monitors: {1: [], 2: [browser, keepass]})
+    clock = {"ms": timeutil.to_ms(__import__("datetime").datetime(2026, 9, 10, 9, 0, 0))}
+    monkeypatch.setattr(timeutil, "now_ms", lambda: clock["ms"])
+    monkeypatch.setattr(winutil, "is_session_locked", lambda: False)
+    monkeypatch.setattr(winutil, "idle_seconds", lambda: 0.0)
+    monkeypatch.setattr(winutil, "free_disk_bytes", lambda p: 10 ** 12)
+    loop.tick()
+    rows = storage.entries_between(0, 10 ** 15)
+    assert [r["monitor_id"] for r in rows] == [1]  # Monitor 2 trotz unauffaelligem oberstem Fenster uebersprungen
+
+
 def test_encode_webp_bleibt_schlank_und_lesbar():
     """Der schnellere Kodiermodus darf das Bild nicht unbrauchbar oder riesig machen."""
     import io

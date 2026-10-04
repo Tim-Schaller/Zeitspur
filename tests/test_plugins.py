@@ -19,7 +19,7 @@ def test_plugin_ids_sind_stabil():
     """Die Id ist zugleich die source in calendar_events - eine Umbenennung liesse Daten verwaisen."""
     assert [p.id for p in plugins.PLUGINS] == [
         "outlook", "teams", "teams_local", "ics", "outlook_mail", "calls_local", "notifications",
-        "browser_history", "git", "github", "pc_times", "wifi", "dawarich"]
+        "browser_history", "git", "github", "pc_times", "wifi", "dawarich", "windows_location"]
 
 
 def test_get_und_display():
@@ -138,8 +138,8 @@ def test_entfernen_raeumt_zugangsdaten_ereignisse_und_cache_ab(storage, data_dir
 # --------------------------------------------------------------------------- Release-Ausgabe (ohne Standort)
 
 def test_release_ausgabe_kennt_kein_standort_plugin():
-    assert "dawarich" not in [p.id for p in plugins._registry(False)]
-    assert [p.id for p in plugins._registry(True)][-1] == "dawarich"
+    assert not {"dawarich", "windows_location"} & {p.id for p in plugins._registry(False)}
+    assert [p.id for p in plugins._registry(True)][-2:] == ["dawarich", "windows_location"]
 
 
 def test_fehlendes_plugin_wird_nur_einmal_gemeldet(caplog, monkeypatch):

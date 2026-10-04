@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from . import eventlog, timeutil
 
@@ -23,8 +24,18 @@ MERGE_GAP_MS = 5 * 60_000      # kuerzere Unterbrechungen im selben Netz gelten 
 _SYSTEM_STOPS = [12, 13, 42]   # Systemstart, Herunterfahren, Ruhezustand: eine offene Verbindung endet dort
 
 
+NO_PLACE = "-"   # "Handy-Hotspot = -": dieses Netz sagt nichts ueber den Ort
+
+
+def ssid_key(ssid: str) -> str:
+    """Vergleichsform eines Netznamens: Gross-/Kleinschreibung, Leer- und Bindestriche zaehlen nicht -
+    'Firma-WLAN' in der Zuordnung trifft das Netz 'FirmaWLAN'."""
+    text = (ssid or "").casefold()
+    return re.sub(r"[\W_]+", "", text) or text.strip()   # nur Emoji/Satzzeichen: so lassen, wie es ist
+
+
 def parse_places(lines: list[str]) -> dict[str, str]:
-    """['Firma-WLAN = Buero', ...] -> {'firma-wlan': 'Buero'}. Wirft ValueError bei kaputten Zeilen."""
+    """['Firma-WLAN = Buero', ...] -> {'firmawlan': 'Buero'}. Wirft ValueError bei kaputten Zeilen."""
     places: dict[str, str] = {}
     for n, line in enumerate(lines, 1):
         if not line.strip():
@@ -32,7 +43,7 @@ def parse_places(lines: list[str]) -> dict[str, str]:
         ssid, sep, place = line.partition("=")
         if not sep or not ssid.strip() or not place.strip():
             raise ValueError(f"Zeile {n}: erwartet „Netzname = Ort“")
-        places[ssid.strip().lower()] = place.strip()
+        places[ssid_key(ssid)] = place.strip()
     return places
 
 
@@ -52,7 +63,9 @@ def connections(events: list[eventlog.LogEvent], stops: list[int], now_ms: int,
         if ts_end - ts_start < MIN_CONNECTION_MS:
             return
         ssid = ev.data.get("SSID") or ev.data.get("ProfileName") or "?"
-        place = places.get(ssid.lower())
+        place = places.get(ssid_key(ssid))
+        if place == NO_PLACE:
+            place = None
         subject = f"{place} (WLAN {ssid})" if place else f"WLAN: {ssid}"
         extra = {"ssid": ssid, "profile": ev.data.get("ProfileName") or None, "in_progress": in_progress}
         if place:

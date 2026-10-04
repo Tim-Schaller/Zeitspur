@@ -31,10 +31,46 @@ TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 CALLRECORDS_URL = "https://graph.microsoft.com/v1.0/communications/callRecords"
 HTTP_TIMEOUT = 30
+# Graph-Antworten sind klein; Obergrenze gegen Speichererschoepfung durch kompromittierte Hosts.
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+# Nur diese https-Hosts duerfen den Bearer-Token sehen; Weiterleitungen woandershin verlieren ihn.
+_ALLOWED_HOSTS = {"graph.microsoft.com", "login.microsoftonline.com"}
 
 
 class TeamsError(Exception):
     pass
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Folgt Weiterleitungen nur auf erlaubte https-MS-Hosts und entfernt dabei den Bearer-Token."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = urllib.parse.urlsplit(newurl)
+        if parts.scheme.lower() != "https" or parts.hostname not in _ALLOWED_HOSTS:
+            raise urllib.error.HTTPError(
+                req.full_url, code, f"unzulaessige Weiterleitung nach {parts.hostname}", headers, fp)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=winutil.https_context()), _SafeRedirect())
+    return _OPENER
+
+
+def _read_limited(resp) -> dict:
+    raw = resp.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise TeamsError("Graph-Antwort unerwartet gross - verworfen")
+    return json.loads(raw.decode("utf-8"))
 
 
 # --------------------------------------------------------------------------- Zugangsdaten (DPAPI)
@@ -265,16 +301,16 @@ class TeamsCallRecords:
         body = urllib.parse.urlencode(data).encode("utf-8")
         req = urllib.request.Request(url, data=body, method="POST",
                                      headers={"Content-Type": "application/x-www-form-urlencoded"})
-        # Zertifikate pruefen wie Windows (auch auf frischen PCs, siehe winutil.https_context)
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=winutil.https_context()) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        # Zertifikate pruefen wie Windows (auch auf frischen PCs, siehe winutil.https_context); sichere Redirects.
+        with _opener().open(req, timeout=HTTP_TIMEOUT) as resp:
+            return _read_limited(resp)
 
     def _get(self, url: str) -> dict:
         req = urllib.request.Request(url, method="GET",
                                      headers={"Authorization": f"Bearer {self._require_token()}",
                                               "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=winutil.https_context()) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        with _opener().open(req, timeout=HTTP_TIMEOUT) as resp:
+            return _read_limited(resp)
 
     def acquire_token(self) -> str:
         url = TOKEN_URL.format(tenant=urllib.parse.quote(self.tenant_id))

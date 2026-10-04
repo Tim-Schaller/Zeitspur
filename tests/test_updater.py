@@ -286,11 +286,17 @@ def test_https_requests_use_the_windows_certificate_check(monkeypatch):
     from zeitspur import winutil
     seen = {}
 
-    def fake_urlopen(request, timeout=None, context=None):
-        seen["context"] = context
-        raise OSError("nur geprueft, nicht verbunden")
+    class FakeOpener:
+        def open(self, request, timeout=None):
+            raise OSError("nur geprueft, nicht verbunden")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    def fake_build_opener(*handlers):
+        for h in handlers:
+            if isinstance(h, urllib.request.HTTPSHandler):
+                seen["context"] = h._context
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
     monkeypatch.setattr(winutil, "https_context", lambda: "WINDOWS-PRUEFUNG")
     with pytest.raises(updater.UpdateError):
         updater.fetch_bytes("https://example.org/latest.json")
@@ -302,12 +308,13 @@ def test_certificate_error_message_is_readable(monkeypatch):
     import urllib.error
     import urllib.request
 
-    def fake_urlopen(request, timeout=None, context=None):
-        err = ssl.SSLCertVerificationError(1, "certificate verify failed")
-        err.verify_message = "unable to get local issuer certificate"
-        raise urllib.error.URLError(err)
+    class FakeOpener:
+        def open(self, request, timeout=None):
+            err = ssl.SSLCertVerificationError(1, "certificate verify failed")
+            err.verify_message = "unable to get local issuer certificate"
+            raise urllib.error.URLError(err)
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: FakeOpener())
     with pytest.raises(updater.UpdateError, match="Zertifikat der Update-Quelle nicht vertrauenswürdig"):
         updater.fetch_bytes("https://example.org/latest.json")
 
@@ -370,3 +377,17 @@ def test_release_seite_oeffnet_nur_die_eigene_adresse(monkeypatch):
     assert Host({"release_url": url}).open_release_page() is True and opened == [url]
     assert Host(None).open_release_page() is False and Host({"release_url": None}).open_release_page() is False
     assert opened == [url]
+
+
+def test_version_boden_verhindert_rollback(tmp_path):
+    folder = tmp_path / "updates"
+    # Ohne Datei: Boden = uebergebene Untergrenze.
+    assert updater.read_floor(folder, "0.4.0") == "0.4.0"
+    # Boden anheben und spaeter nie senken.
+    updater.raise_floor(folder, "0.5.0")
+    assert updater.read_floor(folder, "0.4.0") == "0.5.0"
+    updater.raise_floor(folder, "0.4.1")          # aelter -> ignoriert
+    assert updater.read_floor(folder, "0.4.0") == "0.5.0"
+    # Ein erneut angebotenes, gueltig signiertes aelteres Manifest gilt als nicht neuer.
+    assert updater.is_newer("0.4.9", updater.read_floor(folder, "0.4.0")) is False
+    assert updater.is_newer("0.5.1", updater.read_floor(folder, "0.4.0")) is True

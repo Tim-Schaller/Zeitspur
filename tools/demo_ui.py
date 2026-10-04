@@ -224,10 +224,9 @@ def _demo_payload(bridge, day: date) -> dict:
             "config": bridge.get_config(), "entries": {}, "thumbs": {},
             "focusPlugin": "Gespräche in allen Apps", "pickPlugins": ["Outlook-Kalender", "Gespräche in allen Apps",
                                                                     "PC-Zeiten", "Browser-Verlauf"]}
-    # So, wie andere Zeitspur bekommen: die Release-Ausgabe (ohne Standort-Historie) mit Update-Dienst
-    demo["state"]["features"] = {**demo["state"]["features"], "locations": False, "updates": True}
+    # So, wie andere Zeitspur bekommen: die Release-Ausgabe mit Update-Dienst (die Karte ist ab Werk aus)
+    demo["state"]["features"] = {**demo["state"]["features"], "updates": True}
     demo["state"]["map_enabled"] = False
-    demo["plugins"] = [p for p in demo["plugins"] if p["id"] != "dawarich"]
     # Ersteinrichtung wie beim ersten Start: noch keine Datenbank, die Aufnahme laeuft noch nicht
     from zeitspur.capture import STATE_LABELS, CaptureState
     demo["firstRun"] = {"first_run": True, "ready": False, "capture_state": CaptureState.STARTING.value,

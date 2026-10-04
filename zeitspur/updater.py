@@ -12,8 +12,8 @@ Herausgeber (tools/release_key.py); im Programm steckt nur der oeffentliche Teil
 das GitHub-Konto uebernimmt, kann deshalb trotzdem keinen fremden Code verteilen. Eine aeltere oder gleiche
 Version wird nie installiert - auch kein altes, gueltig signiertes Setup.
 
-Nur Release-Builds aktualisieren sich selbst (edition.UPDATE_CHANNEL). Der eigene Build mit Standort-Historie
-und der Quelltextbetrieb nicht: Ein Release ersetzte dort Funktionen, die er nicht enthaelt.
+Nur Release-Builds aktualisieren sich selbst (edition.UPDATE_CHANNEL). Der eigene Build und der Quelltextbetrieb
+nicht: Dort koennte ein Release Funktionen ersetzen, an denen gerade gearbeitet wird.
 """
 from __future__ import annotations
 
@@ -151,12 +151,24 @@ def setup_url(payload: dict[str, Any], manifest_url: str) -> str:
 
 # --------------------------------------------------------------------------- Netz und Dateien
 
+class _HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    """Folgt nur Weiterleitungen, die wieder auf https zeigen - kein Downgrade auf http/ftp."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme.lower() != "https":
+            raise urllib.error.HTTPError(
+                newurl, code, "Weiterleitung auf Nicht-https-Adresse abgelehnt", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _open(url: str):
     if urllib.parse.urlsplit(url).scheme.lower() not in ("https", "file"):
         raise UpdateError(f"Nur https-Adressen sind erlaubt: {url}")
     request = urllib.request.Request(url, headers={"User-Agent": f"Zeitspur/{__version__}"})
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=winutil.https_context()), _HttpsOnlyRedirect())
     try:
-        return urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT_S, context=winutil.https_context())
+        return opener.open(request, timeout=NETWORK_TIMEOUT_S)
     except urllib.error.HTTPError as e:
         raise UpdateError(f"Update-Quelle antwortet mit HTTP {e.code}") from e
     except (urllib.error.URLError, OSError, ValueError) as e:
@@ -250,6 +262,30 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+FLOOR_NAME = "floor.json"
+
+
+def read_floor(folder: Path, default: str) -> str:
+    """Hoechste je gesehene/installierte Version als Untergrenze (Anti-Rollback), mind. `default`."""
+    info = _read_json(folder / FLOOR_NAME)
+    cand = info.get("version") if info else None
+    try:
+        return cand if cand and is_newer(cand, default) else default
+    except UpdateError:
+        return default
+
+
+def raise_floor(folder: Path, version: str) -> None:
+    """Hebt den Versions-Boden an (nie senken)."""
+    try:
+        parse_version(version)
+    except UpdateError:
+        return
+    current = read_floor(folder, version)
+    if is_newer(version, current) or version == current:
+        _write_json(folder / FLOOR_NAME, {"version": version if is_newer(version, current) else current})
+
+
 def _remove_setups(folder: Path, keep: Path | None = None) -> None:
     for old in folder.glob("*.exe*"):
         if keep is None or old != keep:
@@ -287,6 +323,7 @@ def consume_pending(data_dir: Path, current: str = __version__) -> tuple[str, st
     if arrived:
         _remove_setups(folder)
         (folder / "failed.json").unlink(missing_ok=True)
+        raise_floor(folder, current)   # Boden endgueltig auf die tatsaechlich installierte Version ziehen
         return ("ok", current, show)
     mark_failed(folder, target)
     return ("failed", target, show)
@@ -449,16 +486,21 @@ class Updater:
                 self._notify(f"Update-Prüfung fehlgeschlagen: {e}")
             return
         now_ms = int(time.time() * 1000)
-        if not is_newer(payload["version"], self.current):
+        # Gegen Rollback: nur installieren, was echt neuer ist als die hoechste je gesehene Version,
+        # nicht nur neuer als die gerade laufende. Ein erneut als "latest" ausgeliefertes altes
+        # (gueltig signiertes) Manifest wird so abgelehnt.
+        floor = read_floor(self.folder, self.current)
+        if not is_newer(payload["version"], floor):
             self._payload, self._setup = None, None
             self._set(status="current", version="", notes="", checked_ms=now_ms)
-            log.info("Update-Pruefung: %s ist aktuell", self.current)
+            log.info("Update-Pruefung: %s ist aktuell (Boden %s)", self.current, floor)
             if manual:
                 self._notify(f"Zeitspur ist auf dem neuesten Stand ({self.current}).")
             self._install_requested = False
             return
         known = self._payload is not None and self._payload["version"] == payload["version"] and before == "ready"
         self._payload = payload
+        raise_floor(self.folder, payload["version"])
         if known:
             self._set(status="ready", checked_ms=now_ms)
         else:

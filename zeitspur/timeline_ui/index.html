@@ -3,9 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Content-Security-Policy als zweite Verteidigungslinie: nur die hier eingebetteten, mit Nonce versehenen
+     Skripte/Stile duerfen laufen; eingeschleustes Inline-JS (z. B. onerror aus fremden Kartendaten) wird
+     blockiert. Kein connect-src (keine Exfiltration), Bilder nur data: (Thumbnails) und https: (Kartenkacheln). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__'; style-src 'nonce-__NONCE__'; img-src data: https:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Zeitspur</title>
-<style>/*__LEAFLET_CSS__*/</style>
-<style>/*__CSS__*/</style>
+<style nonce="__NONCE__">/*__LEAFLET_CSS__*/</style>
+<style nonce="__NONCE__">/*__CSS__*/</style>
 </head>
 <body>
 <div id="app" class="app">
@@ -23,7 +27,7 @@
     <div class="statusbar">
       <span id="statePill" class="pill">…</span>
       <button id="pauseBtn" class="btn" title="Aufnahme pausieren oder fortsetzen">Pause</button>
-      <button id="mapBtn" class="btn" title="Karte der Aufenthalte und Fahrten dieses Tages" hidden>Karte</button>
+      <button id="mapBtn" class="btn" title="Orte dieses Tages: Tagesablauf und Karte" hidden>Orte</button>
       <button id="pluginsBtn" class="btn" title="Plugins: Termine, Gespräche, Mails, Mitteilungen und mehr in den Zeitstrahl holen">Plugins</button>
       <button id="settingsBtn" class="btn icon" title="Einstellungen">&#9881;</button>
     </div>
@@ -58,7 +62,10 @@
           <span id="mapTitle">Orte</span>
           <button id="closeMap" class="btn small">Schließen</button>
         </div>
-        <div id="mapCanvas" class="mapcanvas"></div>
+        <div class="places-body">
+          <ol id="placeList" class="place-list"></ol>
+          <div id="mapCanvas" class="mapcanvas"></div>
+        </div>
         <div class="hint" id="mapHint"></div>
       </section>
 
@@ -130,7 +137,7 @@
     </section>
   </main>
 </div>
-<script>/*__LEAFLET_JS__*/</script>
-<script>/*__JS__*/</script>
+<script nonce="__NONCE__">/*__LEAFLET_JS__*/</script>
+<script nonce="__NONCE__">/*__JS__*/</script>
 </body>
 </html>

@@ -103,3 +103,18 @@ def test_orte_zuordnung_pruefen():
     assert wifi.parse_places(["  Firma = Büro ", "", "heim=Zuhause"]) == {"firma": "Büro", "heim": "Zuhause"}
     with pytest.raises(ValueError, match="Zeile 1"):
         wifi.parse_places(["nur ein Name"])
+
+
+def test_netznamen_tolerant_und_hotspot_ohne_ort():
+    """'Firma-WLAN' in der Zuordnung trifft das Netz 'FirmaWLAN'; '= -' heisst: sagt nichts ueber den Ort."""
+    places = wifi.parse_places(["Firma-WLAN = Büro", "Handy Hotspot = -"])
+    rows = wifi.connections([_con(T, "1", "FirmaWLAN"), _dis(T + H, "1", "FirmaWLAN"),
+                             _con(T + 2 * H, "2", "handy-hotspot"), _dis(T + 3 * H, "2", "handy-hotspot")],
+                            stops=[], now_ms=T + 4 * H, places=places)
+    assert [r["subject"] for r in rows] == ["Büro (WLAN FirmaWLAN)", "WLAN: handy-hotspot"]
+    assert "place" not in json.loads(rows[1]["extra"])
+
+
+
+def test_netznamen_nur_aus_emoji_fallen_nicht_zusammen():
+    assert wifi.ssid_key("📱") != wifi.ssid_key("🏠") and wifi.ssid_key("📱") != wifi.ssid_key("?")

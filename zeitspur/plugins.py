@@ -41,7 +41,7 @@ CATEGORY_LABELS = {
     "microphone": "Mikrofon", "notification": "Mitteilung", "web": "Surfen",
     "mail_sent": "Mail gesendet", "mail_received": "Mail empfangen",
     "commit": "Commit", "github": "GitHub", "pc_on": "PC an", "wifi": "WLAN",
-    "visit": "Aufenthalt", "track": "Fahrt",
+    "visit": "Aufenthalt", "track": "Fahrt", "unknown": "Ort unbekannt",
 }
 
 
@@ -844,7 +844,9 @@ class WifiPlugin(EventPlugin):
                    "Optional unten Orte zuordnen, je Zeile „Netzname = Ort“, z. B. „Firma-WLAN = Büro“.")
     setting_fields = (
         Field("places", "Orte zu Netznamen (je Zeile: Netzname = Ort)", kind="list", default=[], optional=True,
-              placeholder="Firma-WLAN = Büro"),
+              placeholder="Firma-WLAN = Büro",
+              help="Groß-/Kleinschreibung, Leer- und Bindestriche im Netznamen zählen nicht. Ein Netz, das "
+                   "nichts über den Ort sagt (Handy-Hotspot), mit „= -“ ausnehmen."),
     )
 
     def unavailable_reason(self) -> str | None:
@@ -865,9 +867,12 @@ class WifiPlugin(EventPlugin):
 class DawarichPlugin(EventPlugin):
     id = "dawarich"
     name = "Standort-Historie (Dawarich)"
-    summary = "Aufenthalte und Fahrten aus Ihrer eigenen Dawarich-Instanz, mit Karte."
-    description = ("Aufenthalte und Fahrten aus Ihrer eigenen Dawarich-Instanz, mit Karte. "
-                   "Der Token wird ausschließlich über HTTPS gesendet.")
+    summary = "GPS vom Handy über Ihre eigene Dawarich-Instanz – Aufenthalte und Fahrten, mit Karte."
+    description = ("Holt die GPS-Punkte Ihres Handys aus Ihrer eigenen Dawarich-Instanz und berechnet daraus "
+                   "selbst, wann Sie wo waren und wann Sie gefahren sind – mit Strecke und Entfernung je Fahrt. "
+                   "Zusammen mit WLAN und Windows-Standort ergibt das die lückenlose Standort-Spur im Zeitstrahl. "
+                   "Liefert der Server keine Rohpunkte (/api/v1/points), nutzt Zeitspur Dawarichs eigene "
+                   "Aufenthalte und Fahrten. Der Token wird ausschließlich über HTTPS gesendet.")
     category = "Orte"
     icon = "📍"
     lane = "Orte"
@@ -875,18 +880,21 @@ class DawarichPlugin(EventPlugin):
     color = "#0f8a6a"
     network = "online"
     account = "token"
-    records = "Aufenthalte (Ort, Dauer) und Fahrten (Strecke vereinfacht, Entfernung)."
+    records = ("GPS-Punkte (Ort, Zeit, Genauigkeit) und daraus berechnete Aufenthalte und Fahrten "
+               "(Strecke vereinfacht, Entfernung).")
     privacy = "Bewegungsdaten sind besonders schutzwürdig – sie bleiben verschlüsselt auf diesem PC."
     setup_steps = ("In Dawarich unter „Account“ den API-Token kopieren.",
-                   "Basis-Adresse Ihrer Instanz (https://…) und Token hier eintragen.")
+                   "Basis-Adresse Ihrer Instanz (https://…) und Token hier eintragen.",
+                   "Steht ein Proxy vor Dawarich, dort /api/v1/points und /api/v1/visits freigeben "
+                   "(/api/v1/tracks nur für den Rückfall).")
     credential_fields = (
         Field("base_url", "Basis-Adresse", placeholder="https://beispiel.example.org"),
         Field("token", "Token", kind="secret"),
     )
 
     def expected_errors(self) -> tuple[type[Exception], ...]:
-        from .dawarich import DawarichError
-        return (PluginError, DawarichError)
+        from .dawarich import DawarichError, Removed
+        return (PluginError, DawarichError, Removed)
 
     def has_credentials(self) -> bool:
         from . import dawarich
@@ -917,20 +925,101 @@ class DawarichPlugin(EventPlugin):
 
     def fetch(self, ctx: SyncContext, start: date, end: date) -> list[dict]:
         from . import dawarich
-        return [e.as_row() for e in dawarich.DawarichClient(dawarich.load_credentials()).fetch(start, end)]
+        return dawarich.sync(dawarich.DawarichClient(dawarich.load_credentials()), ctx.storage, start, end,
+                             still_wanted=lambda: self.id in ctx.cfg.installed_plugins)
+
+    def on_remove(self, storage: "Storage") -> None:
+        from . import dawarich
+        storage.delete_location_points_of_source(dawarich.SOURCE)
+        storage.set_meta(dawarich.POINTS_META_KEY, "{}")
+
+
+class WindowsLocationPlugin(EventPlugin):
+    id = "windows_location"
+    name = "Windows-Standort"
+    summary = "Wo dieser PC ist – über die Ortung von Windows, alle paar Minuten, ohne Handy."
+    description = ("Fragt alle paar Minuten die Ortung von Windows, wo dieser PC gerade ist – solange er an ist und "
+                   "die Aufnahme läuft. Windows nutzt dafür GPS (falls eingebaut) und die WLAN-Netze in der "
+                   "Umgebung. Daraus entstehen Aufenthalte für die Standort-Spur, auch ohne Handy und ohne "
+                   "zugeordnete WLAN-Namen. Unterwegs im Auto weiß es naturgemäß nichts – Fahrten kennt nur "
+                   "Dawarich.")
+    category = "Orte"
+    icon = "🧭"
+    lane = "Orte"
+    label = "PC-Standort"
+    color = "#1c7ed6"
+    records = "Koordinaten und Genauigkeit dieses PCs alle paar Minuten, solange er an ist; daraus Aufenthalte."
+    privacy = ("Bewegungsdaten sind besonders schutzwürdig – sie bleiben verschlüsselt auf diesem PC. Windows "
+               "selbst bestimmt den Standort teils über den Ortungsdienst von Microsoft (anhand der WLAN-Netze in "
+               "der Umgebung); das tut Windows, sobald die Ortung eingeschaltet ist – auch ohne Zeitspur.")
+    setup_steps = ("Windows-Einstellungen → Datenschutz und Sicherheit → Position: „Ortungsdienste“ und "
+                   "„Desktop-Apps den Zugriff auf Ihren Standort erlauben“ einschalten.",
+                   "Plugin hinzufügen – ab dann wird alle paar Minuten gemessen, solange die Aufnahme läuft.")
+    setting_fields = (
+        Field("interval_min", "Abstand der Messungen (Minuten)", kind="number", default=5, optional=True,
+              help="1 bis 60. Kürzer = genauere Zeiten, länger = sparsamer."),
+    )
+    observes = True
+
+    def __init__(self) -> None:
+        import threading
+
+        self._recorder = None
+        self._lock = threading.Lock()   # Beobachter und Oberflaeche duerfen nicht zwei Ortungen starten
+
+    def _rec(self):
+        with self._lock:
+            if self._recorder is None:
+                from .windows_location import LocationRecorder
+                self._recorder = LocationRecorder()
+            return self._recorder
+
+    def unavailable_reason(self) -> str | None:
+        from .windows_location import access_reason
+        return access_reason()
+
+    def check_settings(self, values: dict[str, Any]) -> None:
+        interval = values.get("interval_min")
+        if interval is not None and not (1 <= float(interval) <= 60):
+            raise ValueError("Abstand der Messungen: 1 bis 60 Minuten")
+
+    def test_connection(self, cfg: "Config") -> str:
+        from .windows_location import access_reason, describe_fix
+        reason = access_reason()
+        if reason:
+            return reason
+        try:
+            return describe_fix(self._rec().sampler.wait_for_fix())
+        except Exception as e:
+            return f"Die Ortung von Windows ist nicht erreichbar: {e}"
+
+    def observe(self, cfg: "Config", storage: "Storage", now_ms: int, *, titles_allowed: bool = True) -> int:
+        minutes = self.settings(cfg).get("interval_min") or 5
+        # Pausierte Aufnahme heisst: gerade nichts mitschreiben - auch keinen Standort.
+        return self._rec().observe(storage, now_ms, interval_ms=int(float(minutes) * 60_000),
+                                   allowed=titles_allowed)
+
+    def on_remove(self, storage: "Storage") -> None:
+        from .windows_location import SOURCE
+        with self._lock:
+            recorder, self._recorder = self._recorder, None
+        if recorder is not None:
+            recorder.close()   # Ortung aus; eine gerade laufende Messung schreibt nichts mehr
+        storage.delete_location_points_of_source(SOURCE)
+        storage.delete_events_of_source(SOURCE)
 
 
 # =========================================================================== Registry
 
 def _registry(locations: bool) -> tuple[EventPlugin, ...]:
-    """Die Plugins dieser Ausgabe. Ohne Standort-Funktionen (Release-Build) fehlt Dawarich ganz."""
+    """Die Plugins dieser Ausgabe. Ohne Standort-Funktionen (Release-Build) fehlen Dawarich und Windows-Standort."""
     plugins: list[EventPlugin] = [
         OutlookPlugin(), TeamsPlugin(), TeamsLocalPlugin(),
         IcsCalendarPlugin(), OutlookMailPlugin(), CallsLocalPlugin(), NotificationsPlugin(),
         BrowserHistoryPlugin(), GitPlugin(), GitHubPlugin(), PcTimesPlugin(), WifiPlugin(),
     ]
     if locations:
-        plugins.append(DawarichPlugin())
+        plugins += [DawarichPlugin(), WindowsLocationPlugin()]
     return tuple(plugins)
 
 

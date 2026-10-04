@@ -300,14 +300,20 @@ class CaptureLoop(threading.Thread):
         # Oberstes Fenster je Monitor nur ermitteln, wenn ein Monitor das Vordergrundfenster NICHT enthaelt
         need_top = any(not (fg and winutil.point_in_monitor(fg.center, m)) for m in monitors)
         top = winutil.top_window_per_monitor(monitors) if need_top else {}
+        # ALLE sichtbaren Fenster je Monitor fuer die Ausschlusspruefung: eine ausgeschlossene App, die zwar
+        # sichtbar, aber nicht das oberste/fokussierte Fenster ist, soll ihren Monitor trotzdem aussparen.
+        visible = winutil.visible_windows_per_monitor(monitors)
         for monitor_id, mon, img in frames:
             win = self._window_for({**mon, "monitor_id": monitor_id}, fg, top)
             process_name = win.process_name if win else ""
             title = win.title if win else ""
             exe_path = win.exe_path if win else None
-            # Deny-Liste je Monitor: ein ausgeschlossenes Nicht-Vordergrundfenster wird nur auf SEINEM
-            # Monitor uebersprungen (das Vordergrundfenster ist in tick() bereits global geprueft).
-            if win is not None and win is not fg and self._matches_deny(process_name, title):
+            # Deny-Liste je Monitor: ist IRGENDEIN sichtbares Fenster (oder das repraesentative) ausgeschlossen,
+            # wird der ganze Monitor uebersprungen. Das Vordergrundfenster ist in tick() bereits global geprueft.
+            candidates = list(visible.get(monitor_id, []))
+            if win is not None and win not in candidates:
+                candidates.append(win)
+            if any(c is not fg and self._matches_deny(c.process_name, c.title) for c in candidates):
                 self._close_monitor_block(monitor_id)
                 continue
             small = self._diff.prepare(img)

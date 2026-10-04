@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 SOURCE = "ics"
 MAX_BYTES = 20 * 1024 * 1024
 MAX_ATTENDEES = 25
+# Obergrenze der aufgeloesten Termine je Kalender und Abgleichsfenster: ein boesartiger/kaputter Feed mit
+# dicht getakteter Wiederholung (Sub-Minuten) darf die Aufloesung und die DB nicht aufblaehen (DoS).
+MAX_OCCURRENCES = 5000
 
 
 def parse_lines(text: str) -> list[tuple[str | None, str]]:
@@ -110,6 +113,10 @@ def parse_calendar(data: bytes, start: date, end: date, fallback_name: str) -> t
     window_end = datetime.combine(end + timedelta(days=1), time.min).astimezone()
     rows = []
     for ev in recurring_ical_events.of(cal).between(window_start, window_end):
+        if len(rows) >= MAX_OCCURRENCES:
+            log.warning("ICS-Kalender %s: Terminlimit (%d) erreicht, weitere Termine verworfen",
+                        name, MAX_OCCURRENCES)
+            break
         try:
             row = event_row(ev, name)
         except Exception as e:  # ein defekter Termin darf den Rest nicht kippen

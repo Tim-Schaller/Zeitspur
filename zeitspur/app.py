@@ -529,6 +529,79 @@ class App:
         self._ensure_event_sync()   # sofort mit den neuen Einstellungen abgleichen
         return plugin.describe(self.cfg)
 
+    def name_place(self, name: str, *, lat=None, lon=None, old_name: str | None = None,
+                   ssid: str | None = None) -> dict:
+        """Einen Ort benennen oder umbenennen - aus der Standort-Spur heraus. Gilt sofort, auch rueckwirkend
+        (die Spur rechnet bei jedem Anzeigen neu).
+
+        Umbenennen aendert den Namen ueberall, wo er in der Konfiguration steht - bekannte Orte, Kartenstartpunkt
+        und WLAN-Zuordnungen -, damit ein Ort nicht unter zwei Namen weiterlebt. Stand er nirgends (Name aus
+        Dawarich oder noch unbenannt), entsteht mit Koordinaten ein bekannter Ort, ohne Koordinaten die
+        Zuordnung "Netzname = Ort" im WLAN-Plugin.
+        """
+        from . import location
+
+        name = " ".join(str(name or "").split())
+        if not name or ";" in name or "=" in name or len(name) > 80:
+            raise ValueError("Bitte einen Namen ohne ; und = (höchstens 80 Zeichen) eingeben.")
+        cfg = Config(**self.cfg.to_dict())
+        old = location.norm_name(old_name) if old_name else ""
+        if old and name == str(old_name).strip():
+            return {"ok": True, "name": name}   # nichts geaendert
+        changed = False
+        if old:
+            known = []
+            for entry in cfg.known_places:
+                try:
+                    known.append((entry, location.parse_known_place(entry)))
+                except ValueError:
+                    known.append((entry, None))
+            same = [kp for _, kp in known if kp is not None and location.norm_name(kp.name) == old]
+            # Gibt es mehrere Orte dieses Namens, nur den, in dessen Umkreis der Aufenthalt liegt
+            here = location.match_place(lat, lon, same) if lat is not None and lon is not None else None
+            targets = [here] if here is not None else same
+            renamed = []
+            for entry, kp in known:
+                if kp is not None and any(kp is t for t in targets):
+                    entry = location.format_known_place(location.KnownPlace(name, kp.lat, kp.lon, kp.radius_m))
+                    changed = True
+                renamed.append(entry)
+            cfg.known_places = renamed
+            if cfg.map_home_label and location.norm_name(cfg.map_home_label) == old and here is None:
+                cfg.map_home_label = name
+                changed = True
+            wifi = dict((cfg.plugin_settings or {}).get("wifi") or {})
+            lines = []
+            for line in wifi.get("places") or []:
+                net, sep, place = str(line).partition("=")
+                if sep and location.norm_name(place.strip()) == old:
+                    line = f"{net.strip()} = {name}"
+                    changed = True
+                lines.append(line)
+            if wifi:
+                wifi["places"] = lines
+                cfg.plugin_settings = {**(cfg.plugin_settings or {}), "wifi": wifi}
+        if not changed:
+            if lat is not None and lon is not None:
+                place = location.KnownPlace(name, float(lat), float(lon))
+                cfg.known_places = [*cfg.known_places, location.format_known_place(place)]
+            elif ssid:
+                if "=" in ssid:
+                    raise ValueError("Ein Netzname mit „=“ lässt sich nicht zuordnen.")
+                wifi = dict((cfg.plugin_settings or {}).get("wifi") or {})
+                key = location.norm_ssid(ssid)
+                lines = [line for line in (wifi.get("places") or [])
+                         if location.norm_ssid(str(line).partition("=")[0]) != key]
+                wifi["places"] = [*lines, f"{ssid} = {name}"]
+                cfg.plugin_settings = {**(cfg.plugin_settings or {}), "wifi": wifi}
+            else:
+                raise ValueError("Dieser Ort hat weder Koordinaten noch ein WLAN - er lässt sich nicht benennen.")
+        cfg.validate()
+        save_config(cfg)
+        self._apply_in_place(cfg)
+        log.info("Ort benannt")   # bewusst ohne Namen und Koordinaten
+        return {"ok": True, "name": name}
+
     def reveal_plugin_credentials(self, plugin_id: str) -> dict[str, str]:
         return plugins.get(plugin_id).reveal_credentials()
 

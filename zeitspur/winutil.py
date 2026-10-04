@@ -429,6 +429,45 @@ def top_window_per_monitor(monitors: list[dict]) -> dict[int, WindowInfo]:
     return assign_top_windows(order, monitors, lambda hwnd, rect: _window_info(hwnd, rect=rect))
 
 
+def visible_windows_per_monitor(monitors: list[dict]) -> dict[int, list[WindowInfo]]:
+    """Alle sichtbaren, betitelten Fenster je Monitor (oberstes zuerst).
+
+    Anders als top_window_per_monitor wird NICHT bei einem Fenster je Monitor gestoppt: ein Fenster, das auf
+    mehreren Monitoren liegt, erscheint bei jedem. So laesst sich die Ausschlussliste gegen jedes sichtbare
+    Fenster pruefen, nicht nur gegen das oberste/fokussierte.
+    """
+    result: dict[int, list[WindowInfo]] = {m["monitor_id"]: [] for m in monitors}
+    if not IS_WINDOWS or not monitors:
+        return result
+    order: list[tuple[int, tuple]] = []
+
+    def _cb(hwnd, _):
+        try:
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+                return True
+            if not win32gui.GetWindowText(hwnd) or _is_cloaked(hwnd):
+                return True
+            rect = tuple(win32gui.GetWindowRect(hwnd))
+        except pywintypes.error:
+            return True
+        if rect[2] - rect[0] > 0 and rect[3] - rect[1] > 0:
+            order.append((hwnd, rect))
+        return True
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except pywintypes.error:
+        pass
+    for hwnd, rect in order:                         # keine Monitor-Vergabe: ein Fenster darf auf mehreren liegen
+        info = None
+        for mon in monitors:
+            if _rect_overlap(rect, mon) > 0:
+                if info is None:
+                    info = _window_info(hwnd, rect=rect)
+                result[mon["monitor_id"]].append(info)
+    return result
+
+
 def point_in_monitor(point: tuple[int, int], monitor: dict) -> bool:
     x, y = point
     return (monitor["left"] <= x < monitor["left"] + monitor["width"]

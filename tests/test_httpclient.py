@@ -92,3 +92,21 @@ def test_json_und_kennung():
     assert req.full_url.endswith("/x?p=2") and req.get_header("User-agent").startswith("Zeitspur/")
     with pytest.raises(httpclient.HttpError, match="kein gültiges JSON"):
         httpclient.get_json("https://api.example.org/x", opener=_Opener(b"<html>"))
+
+
+def test_interne_redirect_ziele_werden_erkannt():
+    # Schutz gegen SSRF per Weiterleitung: private/interne Hosts werden als intern erkannt.
+    assert httpclient._is_internal_host("127.0.0.1") is True
+    assert httpclient._is_internal_host("localhost") is True
+    # Oeffentliche Adresse gilt nicht als intern.
+    assert httpclient._is_internal_host("93.184.216.34") is False
+
+
+def test_redirect_auf_interne_adresse_wird_abgelehnt():
+    import urllib.error
+    import urllib.request
+
+    handler = httpclient._SafeRedirect()
+    req = urllib.request.Request("https://kalender.example.org/feed.ics")
+    with pytest.raises(httpclient.HttpError, match="interne Adresse"):
+        handler.redirect_request(req, None, 302, "Found", {}, "https://127.0.0.1/secret")

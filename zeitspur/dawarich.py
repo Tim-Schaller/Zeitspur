@@ -1,8 +1,13 @@
 """Standort-Historie aus einer privaten Dawarich-Instanz (schreibgeschuetzte HTTPS-Schnittstelle).
 
-Es gibt genau zwei Endpunkte: /api/v1/visits (erkannte Aufenthalte) und /api/v1/tracks (Fahrten als
-GeoJSON). Beides wird auf unser Ereignis-Schema abgebildet und landet zusammen mit Outlook-Terminen und
-Teams-Anrufen in calendar_events (source='dawarich').
+Bevorzugt holt Zeitspur die GPS-Rohpunkte (/api/v1/points) und berechnet Aufenthalte und Fahrten selbst
+(location.segment_points): genaue Zeiten, Koordinaten fuer jeden Ort, Strecke und Entfernung je Fahrt.
+Dawarichs eigene Aufenthalte (/api/v1/visits) liefern dann nur noch die Namen. Ist /api/v1/points nicht
+erreichbar (etwa weil ein vorgeschalteter Proxy nur visits/tracks durchlaesst), faellt das Plugin auf die
+beiden alten Endpunkte zurueck - mit deren Schwaechen (Luecken, Ganztages-"Fahrten", Orte ohne Koordinaten).
+
+Die Ergebnisse landen als Belege in calendar_events (source='dawarich'); die Standort-Spur (location.py)
+fuehrt sie mit WLAN und Windows-Standort zu einer lueckenlosen Leiste zusammen.
 
 Sicherheit: Basis-Adresse und Token liegen per DPAPI geschuetzt in
 %LOCALAPPDATA%\\Zeitspur\\dawarich_credentials.bin - nie im Klartext-config.yaml. Der Token geht
@@ -15,15 +20,22 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from . import timeutil
+from . import location, timeutil, winutil
 from .config import data_dir
+from .location import Point, fmt_coords, fmt_km
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .storage import Storage
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +45,12 @@ CREDENTIALS_FILE = "dawarich_credentials.bin"
 HTTP_TIMEOUT = 30
 PER_PAGE = 500          # Obergrenze der Schnittstelle
 MAX_PAGES = 10          # Sicherheitsnetz gegen Endlosschleifen
+POINTS_PER_PAGE = 1000
+MAX_POINT_PAGES = 30    # 30 000 Punkte je Tag - mehr sendet kein Handy
+# Ein Tag gilt als vollstaendig abgeholt, wenn das so lange nach Tagesende geschah: Handys laden
+# Punkte verspaetet hoch (Funkloch, Energiesparen). Bis dahin wird er bei jedem Abgleich neu geholt.
+FINAL_AFTER_MS = 6 * 3_600_000
+POINTS_META_KEY = "dawarich.points_days"
 # Aufenthalte werden nach started_at gefiltert: einer, der vor dem Fenster begann und hineinreicht,
 # fiele sonst weg. Deshalb grosszuegig frueher abfragen und selbst auf Ueberlappung filtern.
 VISIT_LOOKBACK_DAYS = 7
@@ -42,7 +60,40 @@ PATH_EPSILON = 2e-5     # ~2 m; feiner braucht die Kartendarstellung nicht
 
 
 class DawarichError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+# Obergrenze je Antwort gegen Speichererschoepfung durch einen boesartigen/kompromittierten Server.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Folgt Weiterleitungen nur auf https und entfernt bei Hostwechsel den Bearer-Token (kein Token an Fremdhosts)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        target = urllib.parse.urlsplit(new.full_url)
+        if target.scheme.lower() != "https":
+            raise DawarichError("Weiterleitung auf eine unverschluesselte Adresse abgelehnt.", code)
+        if target.hostname != urllib.parse.urlsplit(req.full_url).hostname:
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    # Gleiche Haertung wie httpclient: truststore-TLS-Kontext (auch auf frischen Windows-PCs) + sichere Redirects.
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=winutil.https_context()), _SafeRedirect())
+    return _OPENER
 
 
 # --------------------------------------------------------------------------- Zugangsdaten (DPAPI)
@@ -134,7 +185,7 @@ class LocationEvent:
 
 def _coords(lat, lon) -> str | None:
     try:
-        return f"{float(lat):.5f}, {float(lon):.5f}"
+        return fmt_coords(float(lat), float(lon))
     except (TypeError, ValueError):
         return None
 
@@ -158,10 +209,6 @@ def _plausible_km(distance_raw, ts_start: int, ts_end: int) -> float | None:
     return km
 
 
-def _fmt_km(km: float) -> str:
-    return f"{km:.1f}".replace(".", ",") + " km"
-
-
 # --------------------------------------------------------------------------- Fortbewegungsarten
 # Dawarich zerlegt jede Fahrt in Abschnitte und kennzeichnet jeden per Emoji (Feld mode_timeline).
 MOTOR_EMOJI = frozenset({"🚗", "🚕", "🚙", "🚐", "🛻", "🚚", "🚌", "🚎", "🚆", "🚄", "🚊", "🚇",
@@ -176,6 +223,7 @@ JOURNEY_GAP_S = 900.0   # 15 min ohne Motorbewegung trennen zwei Fahrten
 EDGE_MAX_S = 300.0      # nur kurze Rad-/Fussabschnitte gehoeren noch zur Fahrt (Weg zum Auto)
 EDGE_GAP_S = 180.0      # und nur, wenn sie unmittelbar anschliessen
 MAX_TRACK_KMH = 200.0   # schneller ist die Entfernung nicht die der gezeigten Fahrt
+EDGE_MATCH_MS = 15 * 60_000   # so nah am Anfang/Ende des Tracks gilt dessen Start/Ziel auch fuer die Fahrt
 
 
 def _mode_kind(emoji: str | None) -> str:
@@ -263,41 +311,6 @@ def journeys(props: dict, start_ms: int, end_ms: int) -> list[tuple[int, int]]:
 
 
 
-def _simplify(points: list, epsilon: float = PATH_EPSILON) -> list:
-    """Douglas-Peucker auf [(lat, lon), ...]: haelt die Form der Strecke, spart aber Platz.
-
-    Bewusst iterativ statt rekursiv - eine lange Fahrt hat schnell mehrere tausend Rohpunkte und
-    wuerde die Rekursionsgrenze reissen.
-    """
-    if len(points) < 3:
-        return list(points)
-    keep = [False] * len(points)
-    keep[0] = keep[-1] = True
-    stack = [(0, len(points) - 1)]
-    while stack:
-        first, last = stack.pop()
-        if last <= first + 1:
-            continue
-        ax, ay = points[first]
-        bx, by = points[last]
-        dx, dy = bx - ax, by - ay
-        norm = (dx * dx + dy * dy) ** 0.5
-        best_i, best_d = -1, 0.0
-        for i in range(first + 1, last):
-            px, py = points[i]
-            if norm == 0:
-                d = ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
-            else:
-                d = abs(dy * px - dx * py + bx * ay - by * ax) / norm
-            if d > best_d:
-                best_i, best_d = i, d
-        if best_d > epsilon and best_i > 0:
-            keep[best_i] = True
-            stack.append((first, best_i))
-            stack.append((best_i, last))
-    return [pt for pt, k in zip(points, keep) if k]
-
-
 def _path_from_line(line) -> list:
     """GeoJSON-LineString [[lon, lat], ...] -> [[lat, lon], ...], vereinfacht und gerundet."""
     pts = []
@@ -308,13 +321,7 @@ def _path_from_line(line) -> list:
             continue
     if not pts:
         return []
-    pts = _simplify(pts)
-    if len(pts) > MAX_PATH_POINTS:  # gleichmaessig ausduennen, Anfang und Ende bleiben erhalten
-        step = len(pts) / MAX_PATH_POINTS
-        thinned = [pts[min(int(i * step), len(pts) - 1)] for i in range(MAX_PATH_POINTS)]
-        thinned[-1] = pts[-1]
-        pts = thinned
-    return [[round(lat, 5), round(lon, 5)] for lat, lon in pts]
+    return location.simplify_path(pts, PATH_EPSILON, MAX_PATH_POINTS)
 
 
 def build_visit_event(visit: dict) -> LocationEvent | None:
@@ -332,6 +339,8 @@ def build_visit_event(visit: dict) -> LocationEvent | None:
     subject = name or (f"Aufenthalt ({coords})" if coords else "Aufenthalt")
     extra = {k: visit.get(k) for k in ("status", "confidence", "confidence_band", "duration", "area_id")
              if visit.get(k) is not None}
+    if name:
+        extra["name"] = name
     if place.get("latitude") is not None:
         extra["latitude"] = place.get("latitude")
         extra["longitude"] = place.get("longitude")
@@ -364,13 +373,15 @@ def build_track_events(feature: dict) -> list[LocationEvent]:
     geom = feature.get("geometry") or {}
     line = geom.get("coordinates") if geom.get("type") == "LineString" else None
     first = last = None
+    first_pt = last_pt = None
     if isinstance(line, list) and line:
         # GeoJSON ist [Laengengrad, Breitengrad] - genau umgekehrt zur ueblichen Schreibweise.
         try:
-            first = _coords(line[0][1], line[0][0])
-            last = _coords(line[-1][1], line[-1][0])
-        except (IndexError, TypeError):
-            first = last = None
+            first_pt = [round(float(line[0][1]), 6), round(float(line[0][0]), 6)]
+            last_pt = [round(float(line[-1][1]), 6), round(float(line[-1][0]), 6)]
+            first, last = _coords(*first_pt), _coords(*last_pt)
+        except (IndexError, TypeError, ValueError):
+            first = last = first_pt = last_pt = None
     label = MODE_LABELS.get(str(props.get("dominant_mode") or "").lower(), "Fahrt")
     einzeln = len(fahrten) == 1
     tid = props.get("id")
@@ -394,10 +405,12 @@ def build_track_events(feature: dict) -> list[LocationEvent]:
             extra["track_end"] = props.get("end_at")
         if not einzeln:
             extra["journey"] = f"{nr}/{len(fahrten)}"
-        if einzeln and first:
-            extra["from"] = first
-        if einzeln and last:
-            extra["to"] = last
+        # Start/Ziel: Anfang und Ende des Tracks - fuer die erste bzw. letzte Fahrt nur, wenn sie dort
+        # (fast) beginnt bzw. endet. Damit kann die Standort-Spur die Orte davor und danach anschliessen.
+        if first_pt and (einzeln or (nr == 1 and von - track_start <= EDGE_MATCH_MS)):
+            extra["from"] = first_pt
+        if last_pt and (einzeln or (nr == len(fahrten) and track_ende - bis <= EDGE_MATCH_MS)):
+            extra["to"] = last_pt
         if isinstance(line, list):
             extra["points"] = len(line)
             path = _path_from_line(line)
@@ -408,91 +421,135 @@ def build_track_events(feature: dict) -> list[LocationEvent]:
                 if not einzeln:
                     extra["path_covers_whole_track"] = True
         # Start und Ziel sind die Enden des ganzen Tracks - bei mehreren Fahrten waeren sie irrefuehrend.
-        location = None
+        ort = None
         if einzeln:
-            location = f"{first} nach {last}" if first and last and first != last else (first or last)
+            ort = f"{first} nach {last}" if first and last and first != last else (first or last)
         events.append(LocationEvent(
             ext_id=None if tid is None else (f"track-{tid}" if einzeln else f"track-{tid}-{nr}"),
             ts_start=int(von), ts_end=int(bis),
-            subject=label + (f" - {_fmt_km(km)}" if km is not None else ""),
-            location=location, organizer=None, attendees=None,
+            subject=label + (f" - {fmt_km(km)}" if km is not None else ""),
+            location=ort, organizer=None, attendees=None,
             category="track", extra=json.dumps(extra, ensure_ascii=False)))
     return events
 
 
 
-# --------------------------------------------------------------------------- Bekannte Orte
+# --------------------------------------------------------------------------- GPS-Rohpunkte
 
-DEFAULT_PLACE_RADIUS_M = 150.0
-
-
-@dataclass
-class KnownPlace:
-    """Ein benannter Ort, damit aus Koordinaten ein Name wird ("Buero" statt "52.51627, 13.37770")."""
-
-    name: str
-    lat: float
-    lon: float
-    radius_m: float = DEFAULT_PLACE_RADIUS_M
+_WKT_POINT = re.compile(r"POINT\s*\(\s*([-0-9.eE]+)\s+([-0-9.eE]+)\s*\)")
 
 
-def parse_known_place(entry: str) -> KnownPlace:
-    """'Name;lat;lon' oder 'Name;lat;lon;radius_m' -> KnownPlace. Wirft ValueError bei Unsinn."""
-    parts = [p.strip() for p in str(entry).split(";")]
-    if len(parts) < 3:
-        raise ValueError(f"{entry!r}: erwartet 'Name;Breite;Laenge' (optional ';Radius in Metern')")
-    name = parts[0]
-    if not name:
-        raise ValueError(f"{entry!r}: der Name fehlt")
-    try:
-        lat, lon = float(parts[1].replace(",", ".")), float(parts[2].replace(",", "."))
-        radius = float(parts[3].replace(",", ".")) if len(parts) > 3 and parts[3] else DEFAULT_PLACE_RADIUS_M
-    except ValueError as e:
-        raise ValueError(f"{entry!r}: Breite/Laenge/Radius muessen Zahlen sein") from e
-    if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-        raise ValueError(f"{entry!r}: Breite muss -90..90, Laenge -180..180 sein")
-    if radius <= 0:
-        raise ValueError(f"{entry!r}: der Radius muss groesser als 0 sein")
-    return KnownPlace(name, lat, lon, radius)
-
-
-def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Entfernung in Metern (Haversine) - kein Koordinatenvergleich, sonst waere der Radius breitenabhaengig."""
-    import math
-
-    r = 6_371_000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
-
-
-def match_place(lat, lon, places) -> "KnownPlace | None":
-    """Naechstgelegener bekannter Ort innerhalb seines Radius - sonst None (dann bleiben die Koordinaten)."""
+def parse_point(raw: dict) -> Point | None:
+    """Ein Punkt aus /api/v1/points -> Point. Robust gegen die Varianten der Dawarich-Versionen."""
+    if not isinstance(raw, dict):
+        return None
+    lat, lon = raw.get("latitude"), raw.get("longitude")
+    if (lat is None or lon is None) and isinstance(raw.get("lonlat"), str):
+        m = _WKT_POINT.search(raw["lonlat"])   # neuere Versionen: "POINT (lon lat)"
+        if m:
+            lon, lat = m.group(1), m.group(2)
     try:
         lat, lon = float(lat), float(lon)
     except (TypeError, ValueError):
         return None
-    best, best_d = None, None
-    for place in places or []:
-        d = distance_m(lat, lon, place.lat, place.lon)
-        if d <= place.radius_m and (best_d is None or d < best_d):
-            best, best_d = place, d
+    ts = raw.get("timestamp")
+    if isinstance(ts, str) and ts.strip().lstrip("-").isdigit():
+        ts = int(ts)
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        ms = int(ts * 1000) if ts < 100_000_000_000 else int(ts)   # Sekunden oder schon Millisekunden
+    else:
+        ms = timeutil.iso_to_ms(ts if isinstance(ts, str) else None)
+    if ms is None:
+        return None
+    try:
+        acc = float(raw["accuracy"]) if raw.get("accuracy") is not None else None
+    except (TypeError, ValueError):
+        acc = None
+    return Point(ms, lat, lon, acc)
+
+
+def _visit_spans(visits: list) -> list[tuple[int, int, str]]:
+    """Dawarichs Aufenthalte als (Beginn, Ende, Name) - nur zum Benennen der eigenen Aufenthalte."""
+    out = []
+    for v in visits or []:
+        if not isinstance(v, dict) or str(v.get("status", "")).lower() == DECLINED:
+            continue
+        name = (v.get("name") or "").strip()
+        start = timeutil.iso_to_ms(v.get("started_at"))
+        if not name or start is None:
+            continue
+        end = max(timeutil.iso_to_ms(v.get("ended_at")) or start, start)
+        out.append((start, end, name))
+    return out
+
+
+def _name_for(start: int, end: int, spans: list[tuple[int, int, str]]) -> str | None:
+    """Name des Dawarich-Aufenthalts, der am besten zur Zeit passt (mind. halb ueberlappend oder 10 Minuten)."""
+    best, best_ov = None, 0
+    for s, e, name in spans:
+        ov = min(end, e) - max(start, s)
+        shorter = max(1, min(end - start, e - s))
+        if ov > best_ov and (ov >= shorter / 2 or ov >= 10 * 60_000):
+            best, best_ov = name, ov
     return best
 
 
-def places_from_config(cfg) -> list:
-    """Bekannte Orte aus der Konfiguration; der Kartenstartpunkt zaehlt automatisch als Ort."""
-    places: list[KnownPlace] = []
-    label = (getattr(cfg, "map_home_label", "") or "").strip()
-    if label:
-        places.append(KnownPlace(label, float(cfg.map_home_lat), float(cfg.map_home_lon)))
-    for entry in getattr(cfg, "known_places", None) or []:
-        try:
-            places.append(parse_known_place(entry))
-        except ValueError as e:
-            log.warning("Bekannter Ort wird uebersprungen: %s", e)
-    return places
+def events_from_points(points: list[Point], visits: list, window_start: int, window_end: int) -> list[dict]:
+    """GPS-Rohpunkte -> Aufenthalte und Fahrten als calendar_events-Zeilen (nur was das Fenster beruehrt)."""
+    stays, trips = location.segment_points(points)
+    spans = _visit_spans(visits)
+    rows: list[dict] = []
+    for st in stays:
+        name = _name_for(st.start, st.end, spans)
+        for ps, pe in st.parts or [(st.start, st.end)]:
+            extra = {"latitude": round(st.lat, 6), "longitude": round(st.lon, 6), "points": st.points,
+                     "basis": "points"}
+            if name:
+                extra["name"] = name
+            rows.append({"ext_id": f"stay-{ps}", "ts_start": ps, "ts_end": pe,
+                         "subject": name or "Aufenthalt", "location": fmt_coords(st.lat, st.lon),
+                         "organizer": None, "attendees": None, "category": "visit",
+                         "extra": json.dumps(extra, ensure_ascii=False)})
+    for tr in trips:
+        km = tr.distance_m / 1000
+        label = location.MODE_LABELS.get(tr.mode or "", "Fahrt")
+        extra = {"distance_km": round(km, 2), "mode": tr.mode, "path": tr.path,
+                 "from": [round(tr.from_pt[0], 6), round(tr.from_pt[1], 6)],
+                 "to": [round(tr.to_pt[0], 6), round(tr.to_pt[1], 6)], "basis": "points"}
+        if tr.max_kmh is not None:
+            extra["max_kmh"] = round(tr.max_kmh)
+        rows.append({"ext_id": f"trip-{tr.start}", "ts_start": tr.start, "ts_end": tr.end,
+                     "subject": f"{label} - {fmt_km(km)}",
+                     "location": f"{fmt_coords(*tr.from_pt)} nach {fmt_coords(*tr.to_pt)}",
+                     "organizer": None, "attendees": None, "category": "track",
+                     "extra": json.dumps(extra, ensure_ascii=False)})
+    # Dawarichs eigene, benannte Orte mit Koordinaten ("Zuhause", "Firma"): kein Beleg fuer die Leiste, aber
+    # die Standort-Spur benennt damit Orte, an denen das Handy kaum Punkte schickt (Stillstand).
+    for v in visits or []:
+        place = (v.get("place") or {}) if isinstance(v, dict) else {}
+        name = (v.get("name") or "").strip() if isinstance(v, dict) else ""
+        start = timeutil.iso_to_ms(v.get("started_at")) if isinstance(v, dict) else None
+        if not name or start is None or place.get("latitude") is None or str(v.get("status", "")).lower() == DECLINED:
+            continue
+        end = max(timeutil.iso_to_ms(v.get("ended_at")) or start, start)
+        extra = {"latitude": place.get("latitude"), "longitude": place.get("longitude"), "name": name}
+        rows.append({"ext_id": f"name-{v.get('id')}", "ts_start": start, "ts_end": end, "subject": name,
+                     "location": None, "organizer": None, "attendees": None, "category": "named_place",
+                     "extra": json.dumps(extra, ensure_ascii=False)})
+    return [r for r in rows if r["ts_end"] >= window_start and r["ts_start"] <= window_end]
+
+
+def days_to_fetch(start: date, end: date, fetched: dict[str, int], now_ms: int) -> list[date]:
+    """Tage, deren Punkte (neu) geholt werden muessen: noch nie oder nicht lange genug nach Tagesende."""
+    today = timeutil.local_date(now_ms)
+    out = []
+    d = start
+    while d <= min(end, today):
+        done = fetched.get(d.isoformat())
+        if not isinstance(done, int) or done < timeutil.day_bounds(d)[1] + FINAL_AFTER_MS:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
 
 
 # --------------------------------------------------------------------------- Zugriff
@@ -511,33 +568,50 @@ def _http_message(code: int) -> str:
 
 
 class DawarichClient:
+    # Dawarich erlaubt 60 Anfragen je Minute - beim Nachholen vieler Tage deshalb mit Abstand fragen.
+    MIN_REQUEST_INTERVAL_S = 1.05
+
     def __init__(self, credentials: dict):
         self.base_url = normalize_base_url(credentials["base_url"])
         self._token = credentials["token"]
+        self._last_request = 0.0
+        self.requests = 0
 
     @classmethod
     def from_stored(cls, path: Path | None = None) -> "DawarichClient | None":
         creds = load_credentials(path)
         return cls(creds) if creds else None
 
-    def _get(self, path: str, params: dict):
-        url = self.base_url + path + "?" + urllib.parse.urlencode(params)
+    def _request(self, path: str, params: dict):
+        wait = self.MIN_REQUEST_INTERVAL_S - (time.monotonic() - self._last_request)
+        if wait > 0 and self.requests:
+            time.sleep(wait)
+        url = self.base_url + path + ("?" + urllib.parse.urlencode(params) if params else "")
         req = urllib.request.Request(url, method="GET", headers={
             "Authorization": f"Bearer {self._token}",  # nur im Header, nie in der URL
             "Accept": "application/json"})
+        self.requests += 1
         try:
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+            with _opener().open(req, timeout=HTTP_TIMEOUT) as resp:
+                body = resp.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise DawarichError(
+                        f"Antwort des Standort-Dienstes ist zu gross (ueber {MAX_RESPONSE_BYTES // (1024 * 1024)} MB).")
+                return json.loads(body.decode("utf-8")), resp.headers
         except urllib.error.HTTPError as e:
-            raise DawarichError(_http_message(e.code)) from e
+            raise DawarichError(_http_message(e.code), e.code) from e
         except urllib.error.URLError as e:
             raise DawarichError(f"Standort-Dienst nicht erreichbar: {e.reason}") from e
         except ValueError as e:
             raise DawarichError(f"Unerwartete Antwort: {e}") from e
+        finally:
+            self._last_request = time.monotonic()
+
+    def _get(self, path: str, params: dict):
+        return self._request(path, params)[0]
 
     def _pages(self, path: str, start_utc: datetime, end_utc: datetime, extract) -> list:
-        """Seitenweise abfragen. Die Schnittstelle erlaubt 60 Anfragen/Minute - deshalb grosse
-        Zeitraeume am Stueck und hoechstens MAX_PAGES Seiten."""
+        """Seitenweise abfragen - grosse Zeitraeume am Stueck und hoechstens MAX_PAGES Seiten."""
         items: list = []
         for page in range(1, MAX_PAGES + 1):
             payload = self._get(path, {
@@ -552,6 +626,59 @@ class DawarichClient:
             log.warning("Dawarich %s: Seitenlimit erreicht, Ergebnis eventuell unvollstaendig", path)
         return items
 
+    @staticmethod
+    def _utc(ms: int) -> str:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # ---- GPS-Rohpunkte
+    def points_available(self) -> bool:
+        """Liefert der Server /api/v1/points? 404 heisst: nicht freigegeben (oft ein vorgeschalteter Proxy)."""
+        now = timeutil.now_ms()
+        try:
+            self._request("/api/v1/points", {"start_at": self._utc(now - 3_600_000), "end_at": self._utc(now),
+                                             "page": 1, "per_page": 1, "slim": "true"})
+        except DawarichError as e:
+            if e.status == 404:
+                return False
+            raise
+        return True
+
+    def fetch_points(self, start_ms: int, end_ms: int) -> list[Point]:
+        """Alle Punkte in [start, end), zeitlich aufsteigend.
+
+        Massgeblich fuer das Ende ist X-Total-Pages. Fehlt der Kopf, wird bis zur ersten leeren Seite
+        geblaettert - eine kuerzere Seite heisst nicht "fertig", ein Server oder Proxy kann per_page deckeln.
+        """
+        points: list[Point] = []
+        previous = None
+        for page in range(1, MAX_POINT_PAGES + 1):
+            payload, headers = self._request("/api/v1/points", {
+                "start_at": self._utc(start_ms), "end_at": self._utc(end_ms - 1000),
+                "page": page, "per_page": POINTS_PER_PAGE, "order": "asc", "slim": "true"})
+            batch = payload if isinstance(payload, list) else (payload or {}).get("points") or []
+            if not batch or batch[0] == previous:
+                break   # leer - oder der Server ignoriert "page" und liefert immer dieselbe Seite
+            previous = batch[0]
+            points.extend(p for p in (parse_point(r) for r in batch) if p is not None and start_ms <= p.ts < end_ms)
+            try:
+                total = int(headers.get("X-Total-Pages") or 0)
+            except (TypeError, ValueError):
+                total = 0
+            if total and page >= total:
+                break
+        else:
+            log.warning("Dawarich: mehr als %d Punkte an einem Tag, Rest ausgelassen",
+                        MAX_POINT_PAGES * POINTS_PER_PAGE)
+        return points
+
+    def fetch_visits(self, start_ms: int, end_ms: int) -> list:
+        """Dawarichs eigene Aufenthalte (Rohdaten) - mit Vorlauf, weil der Server nach Beginn filtert."""
+        start_utc = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc) - timedelta(days=VISIT_LOOKBACK_DAYS)
+        end_utc = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
+        return self._pages("/api/v1/visits", start_utc, end_utc,
+                           lambda p: p if isinstance(p, list) else (p or {}).get("visits") or [])
+
+    # ---- Dawarichs Aufenthalte und Fahrten (Rueckfall ohne Rohpunkte)
     def fetch(self, start: date, end: date) -> list[LocationEvent]:
         """Aufenthalte und Fahrten, die das lokale Fenster [start, end] beruehren."""
         window_start = timeutil.day_bounds(start)[0]
@@ -560,9 +687,7 @@ class DawarichClient:
         end_utc = datetime.fromtimestamp(window_end / 1000, tz=timezone.utc)
 
         events: list[LocationEvent] = []
-        visits = self._pages("/api/v1/visits", start_utc - timedelta(days=VISIT_LOOKBACK_DAYS), end_utc,
-                             lambda p: p if isinstance(p, list) else (p or {}).get("visits") or [])
-        for raw in visits:
+        for raw in self.fetch_visits(window_start, window_end):
             ev = build_visit_event(raw)
             if ev is not None:
                 events.append(ev)
@@ -579,8 +704,70 @@ class DawarichClient:
         return kept
 
     def test_connection(self) -> str:
+        now = timeutil.now_ms()
+        if self.points_available():
+            points = self.fetch_points(now - 86_400_000, now)
+            return (f"Verbindung erfolgreich - GPS-Rohpunkte freigegeben ({len(points)} Punkte in den letzten "
+                    "24 Stunden). Zeitspur berechnet Aufenthalte und Fahrten selbst.")
         today = date.today()
         events = self.fetch(today - timedelta(days=7), today)
         visits = sum(1 for e in events if e.category == "visit")
         tracks = sum(1 for e in events if e.category == "track")
-        return f"Verbindung erfolgreich - letzte 7 Tage: {visits} Aufenthalte, {tracks} Fahrten."
+        return (f"Verbindung erfolgreich - letzte 7 Tage: {visits} Aufenthalte, {tracks} Fahrten. Hinweis: "
+                "/api/v1/points ist nicht erreichbar (404). Für eine genaue, lückenlose Ortsspur diesen "
+                "Endpunkt freigeben (z. B. im vorgeschalteten Proxy).")
+
+
+# --------------------------------------------------------------------------- Abgleich
+
+class Removed(Exception):
+    """Das Plugin wurde waehrend des Abgleichs entfernt - nichts mehr schreiben."""
+
+
+def sync(client: DawarichClient, storage: "Storage", start: date, end: date, *,
+         now_ms: int | None = None, still_wanted=lambda: True) -> list[dict]:
+    """Belege fuer [start, end]: aus Rohpunkten, wenn der Server sie liefert, sonst aus visits/tracks.
+
+    Rohpunkte werden je Tag abgeholt und lokal (verschluesselt) gespeichert. Abgeschlossene Tage holt der
+    naechste Abgleich nicht erneut - nur heute und Tage, die noch Nachzuegler bekommen koennen.
+    """
+    now_ms = timeutil.now_ms() if now_ms is None else now_ms
+    window_start, window_end = timeutil.day_bounds(start)[0], timeutil.day_bounds(end)[1]
+    if not client.points_available():
+        log.info("Dawarich: /api/v1/points nicht freigegeben - nutze Aufenthalte und Fahrten von Dawarich")
+        return [e.as_row() for e in client.fetch(start, end)]
+    try:
+        fetched = json.loads(storage.get_meta(POINTS_META_KEY) or "{}")
+        fetched = fetched if isinstance(fetched, dict) else {}
+    except ValueError:
+        fetched = {}
+    days = days_to_fetch(start, end, fetched, now_ms)
+    total = 0
+    for d in days:
+        day_start, day_end = timeutil.day_bounds(d)
+        points = client.fetch_points(day_start, day_end)
+        if not still_wanted():   # waehrend des Abrufs entfernt: keine Bewegungsdaten mehr ablegen
+            raise Removed("Plugin entfernt")
+        storage.replace_location_points(SOURCE, day_start, day_end, [(p.ts, p.lat, p.lon, p.acc) for p in points])
+        fetched[d.isoformat()] = now_ms
+        total += len(points)
+        # nach jedem Tag merken - bricht der Abgleich ab, muss nicht alles erneut geholt werden
+        storage.set_meta(POINTS_META_KEY, json.dumps(fetched, sort_keys=True))
+    oldest = (timeutil.local_date(now_ms) - timedelta(days=60)).isoformat()
+    fetched = {k: v for k, v in fetched.items() if k >= oldest}
+    storage.set_meta(POINTS_META_KEY, json.dumps(fetched, sort_keys=True))
+    if days:
+        log.info("Dawarich: %d Punkte fuer %d Tag(e) abgeholt", total, len(days))
+    # Ersetzt werden alle Belege, die das Fenster beruehren - auch ein Aufenthalt, der drei Tage frueher begann
+    # oder bis uebermorgen reicht. Damit er nicht gekappt wird, die Punkte ueber seine ganze Dauer laden.
+    existing = storage.events_between(window_start, window_end, sources=[SOURCE])
+    lo = min([window_start - location.LOOKBACK_MS] + [int(r["ts_start"]) for r in existing])
+    hi = max([window_end] + [int(r["ts_end"]) + 1 for r in existing])
+    rows = storage.location_points(SOURCE, lo, hi)
+    points = [Point(r["ts"], r["lat"], r["lon"], r["accuracy"]) for r in rows]
+    try:
+        visits = client.fetch_visits(window_start, window_end)
+    except DawarichError as e:
+        log.warning("Dawarich: Aufenthalte (fuer die Namen) nicht abrufbar: %s", e)
+        visits = []
+    return events_from_points(points, visits, window_start, window_end)

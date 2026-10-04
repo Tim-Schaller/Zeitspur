@@ -151,6 +151,12 @@ def run_cleanup(storage: Storage, cfg: Config, stop_event: threading.Event | Non
             break
         if wait_pause():
             break
+    # 3c) Standortpunkte (GPS, Windows-Standort) - Bewegungsdaten bleiben nicht laenger als alles andere
+    while not stop.is_set():
+        if storage.delete_location_points_older_than(cutoff, batch_size) == 0:
+            break
+        if wait_pause():
+            break
 
     report.aborted = stop.is_set()
     # 4) Rest der Freelist zurueckgeben und WAL zusammenfalten, damit die Datei tatsaechlich schrumpft

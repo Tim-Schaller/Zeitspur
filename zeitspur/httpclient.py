@@ -10,8 +10,10 @@ Regeln, die hier fuer alle gelten:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -49,6 +51,23 @@ def host_of(url: str) -> str:
     return urllib.parse.urlsplit(url).hostname or "?"
 
 
+def _is_internal_host(host: str) -> bool:
+    """True, wenn der Host auf eine private/interne Adresse zeigt (Schutz gegen SSRF per Weiterleitung)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False  # nicht aufloesbar: der normale Fehlerpfad greift
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return True
+    return False
+
+
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -57,6 +76,8 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
         target = urllib.parse.urlsplit(new.full_url)
         if target.scheme.lower() != "https":
             raise HttpError("Weiterleitung auf eine unverschlüsselte Adresse abgelehnt.", code)
+        if _is_internal_host(target.hostname or ""):
+            raise HttpError("Weiterleitung auf eine interne Adresse abgelehnt.", code)
         if target.hostname != urllib.parse.urlsplit(req.full_url).hostname:
             new.remove_header("Authorization")
         return new

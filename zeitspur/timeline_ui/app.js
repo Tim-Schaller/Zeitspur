@@ -23,6 +23,7 @@
     mode: "timeline",     // 'timeline' | 'setup' | 'settings' | 'plugins'
     map: null,            // Leaflet-Karte, erst bei Bedarf erzeugt
     mapLayer: null,
+    placeSel: null,       // gewaehlter Abschnitt der Standort-Spur (Index)
     dragging: null,
     plugins: [],          // letzte list_plugins()
     pluginFilter: { q: "", cat: "", installed: false, local: false },
@@ -251,14 +252,19 @@
     if (!state.visible || state.mode !== "timeline" || state.date !== todayIso() || !state.day) return;
     try {
       const day = await state.api.get_day(state.date);
-      const evFp = (d) => `${(d.events || []).length}:${Math.max(0, ...(d.events || []).map((e) => e.ts_end || 0))}`;
+      const evFp = (d) => `${(d.events || []).length}:${Math.max(0, ...(d.events || []).map((e) => e.ts_end || 0))}`
+        + `|${(d.location_strip || []).map((x) => `${x.kind}${x.name || ""}${x.ts_start}`).join(",")}`;
       if (day.total_entries !== state.day.total_entries || day.last_ms !== state.day.last_ms || evFp(day) !== evFp(state.day)) {
+        const anchor = placeAnchor();
         state.day = day;
+        state.placeSel = findPlace(anchor, day.location_strip || []);
         if (state.view && day.last_ms && day.last_ms > state.view.end && state.view.end - state.view.start < 6 * HOUR) {
           const span = state.view.end - state.view.start;
           state.view = { start: day.last_ms + 5 * MIN - span, end: day.last_ms + 5 * MIN };
         }
         render();
+        // Liste und Karte frisch, Kartenausschnitt bleibt - aber nicht, waehrend ein Ort benannt wird
+        if (!$("placeList").querySelector(".pl-edit")) renderPlacesPanel(false);
       }
     } catch (e) { /* ignorieren */ }
   }
@@ -285,8 +291,10 @@
   async function loadDay(keepView = false) {
     if (!state.info || !state.info.ready) return;
     try {
+      const anchor = keepView ? placeAnchor() : null;
       const day = await state.api.get_day(state.date);
       state.day = day;
+      state.placeSel = findPlace(anchor, day.location_strip || []);
       $("dayPicker").value = state.date;
       if (!keepView || !state.view) {
         if (day.first_ms) {
@@ -296,8 +304,9 @@
           state.view = { start: day.start_ms + 6 * HOUR, end: day.start_ms + 20 * HOUR };
         }
       }
-      if (!keepView) { state.selected = null; $("detail").hidden = true; }
+      if (!keepView) { state.selected = null; $("detail").hidden = true; state.placeSel = null; }
       render();
+      renderPlacesPanel();
     } catch (e) {
       showBanner("Tag konnte nicht geladen werden: " + errMessage(e), true);
     }
@@ -404,16 +413,18 @@
   }
   function renderEventsLane(lanes, v, step, width) {
     const all = (state.day && state.day.events) || [];
+    const strip = (state.day && state.day.location_strip) || [];
     updateMapButton();
-    if (!all.length) return;
+    if (!all.length && !strip.length) return;
     // Je Zeile, die ein Plugin angibt, eine eigene Spur: Aufenthalte dauern oft Stunden und wuerden
     // Termine sonst verdecken. Bekannte Zeilen in fester Reihenfolge (plugins.LANES), weitere alphabetisch dahinter.
     const order = (state.info && state.info.lane_order) || ["Termine", "Orte"];
     const rank = (n) => (order.indexOf(n) + 1) || 99;
-    const names = [...new Set(all.map((e) => e.lane || "Termine"))]
+    const names = [...new Set([...all.map((e) => e.lane || "Termine"), ...(strip.length ? ["Orte"] : [])])]
       .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     for (const name of names) {
-      renderEventRow(lanes, v, step, width, name, all.filter((e) => (e.lane || "Termine") === name));
+      if (name === "Orte" && strip.length) renderStripRow(lanes, v, step, width, strip);
+      else renderEventRow(lanes, v, step, width, name, all.filter((e) => (e.lane || "Termine") === name));
     }
   }
   function renderEventRow(lanes, v, step, width, label, events) {
@@ -440,32 +451,126 @@
         title: parts.join("\n"),
       });
       if (w > 44) node.append(el("span", { class: "ev-label", text: ev.subject }));
-      if (ev.geo && mapAllowed()) {
-        node.style.cursor = "pointer";
-        node.addEventListener("click", () => openMap(ev));
-      }
       track.append(node);
     }
     row.append(track);
     lanes.append(row);
   }
-  // ------------------------------------------------------------------ Karte
+
+  // ------------------------------------------------------------------ Standort-Spur
+  // Eine Leiste ohne Luecken: Aufenthalt -> Fahrt -> Aufenthalt. Zusammengefuehrt wird in location.py; hier
+  // wird nur gezeichnet. Schraffiert ist, was nur erschlossen ist (keine Messung, aber davor und danach
+  // derselbe Ort bzw. eine Fahrt zwischen zwei Orten).
+  const PLACE_COLORS = ["#0f8a6a", "#2f6fed", "#7b3ff2", "#c2255c", "#0b7285", "#5c940d", "#9c36b5", "#1864ab"];
+  const MODE_ICONS = { car: "🚗", bike: "🚲", walk: "🚶", train: "🚆", flight: "✈", boat: "⛴" };
+  function placeColor(seg) {
+    if (!seg.name) return "#7c8798";
+    let h = 0;
+    for (const ch of seg.name.toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return PLACE_COLORS[h % PLACE_COLORS.length];
+  }
+  function segColor(seg) {
+    if (seg.kind === "stay") return placeColor(seg);
+    if (seg.kind === "trip") return "#e8890c";
+    return null;   // unbekannt: Muster aus dem Stylesheet
+  }
+  function segSpan(seg) {
+    return `${seg.starts_before ? "(Vortag) " : ""}${seg.start_label}–${seg.end_label}${seg.ends_after ? " (Folgetag)" : ""}`;
+  }
+  function tripTitle(seg) {
+    return `${seg.label}${seg.route ? " " + seg.route : ""}`;   // "Autofahrt Büro → Zuhause", "Fahrt → Zuhause"
+  }
+  function fitText(candidates, width) {
+    for (const c of candidates) if (c && c.length * 6.4 + 12 <= width) return c;
+    return "";
+  }
+  function segLabel(seg, w) {
+    const dur = fmtDuration(seg.real_end - seg.real_start);
+    if (seg.kind === "stay") {
+      // Ueber die Tagesgrenze: "bis 07:40 Zuhause" bzw. "ab 21:30 Zuhause" liest sich besser als Uhrzeiten vom Vortag
+      const span = seg.starts_before && seg.ends_after ? "ganztags"
+        : seg.starts_before ? `bis ${seg.end_label}` : seg.ends_after ? `ab ${seg.start_label}` : `${seg.start_label}–${seg.end_label}`;
+      return fitText([`${span} ${seg.label}`, seg.label], w);
+    }
+    if (seg.kind === "trip") {
+      const icon = MODE_ICONS[seg.mode] ? MODE_ICONS[seg.mode] + " " : "";
+      return fitText([seg.to ? `${icon}${dur} → ${seg.to}` : "", `${icon}${dur}`, dur], w);
+    }
+    return fitText(["Ort unbekannt", "?"], w);
+  }
+  function segTooltip(seg) {
+    const lines = [];
+    if (seg.kind === "stay") lines.push(seg.label);
+    else if (seg.kind === "trip") lines.push(tripTitle(seg));
+    else lines.push("Ort unbekannt – keine Standortdaten");
+    lines.push(`${segSpan(seg)} · ${seg.duration_label}`);
+    if (seg.distance_label) lines.push("Strecke: " + seg.distance_label);
+    if (seg.sources && seg.sources.length) lines.push("Belege: " + seg.sources.join(", "));
+    if (seg.fully_inferred && seg.kind === "trip") lines.push("Fahrt nicht aufgezeichnet – erschlossen aus den Orten davor und danach");
+    else if (seg.fully_inferred) lines.push("Ohne Messung – erschlossen aus den Belegen davor und danach");
+    else if (seg.inferred_ms) lines.push(`Davon ${seg.inferred_label} ohne Messung (schraffiert, erschlossen)`);
+    if (seg.addresses && seg.addresses.length) lines.push("Laut Dawarich: " + seg.addresses.join("; "));
+    if (seg.coords_label && seg.kind === "stay") lines.push("Koordinaten: " + seg.coords_label);
+    lines.push("Klick: Tagesablauf" + (seg.kind === "stay" && (seg.lat != null || seg.ssid) ? " und Ort benennen" : ""));
+    return lines.join("\n");
+  }
+  function renderStripRow(lanes, v, step, width, strip) {
+    const row = el("div", { class: "lane events-lane strip-lane" });
+    const label = el("div", { class: "lane-label strip-label", text: "Orte", title: "Tagesablauf der Orte öffnen" });
+    label.addEventListener("click", (e) => { e.stopPropagation(); openPlaces(null); });
+    row.append(label);
+    const track = el("div", { class: "lane-track" });
+    for (let t = Math.ceil(v.start / step) * step; t <= v.end; t += step) {
+      track.append(el("div", { class: "gridline", style: { left: `${xAtTime(t)}px` } }));
+    }
+    strip.forEach((seg, i) => {
+      if (seg.ts_end < v.start || seg.ts_start > v.end) return;
+      const x1 = Math.max(0, xAtTime(seg.ts_start));
+      const x2 = Math.min(width, xAtTime(seg.ts_end));
+      const w = Math.max(2, x2 - x1);
+      const color = segColor(seg);
+      const node = el("div", {
+        class: `seg seg-${seg.kind}` + (seg.fully_inferred ? " inferred" : "") + (state.placeSel === i ? " selected" : ""),
+        style: { left: `${x1}px`, width: `${w}px`, ...(color ? { background: color } : {}) },
+        title: segTooltip(seg),
+      });
+      if (!seg.fully_inferred) {
+        for (const [a, b] of seg.inferred || []) {
+          const ia = Math.max(x1, xAtTime(a)), ib = Math.min(x2, xAtTime(b));
+          if (ib - ia >= 2) node.append(el("div", { class: "seg-inferred", style: { left: `${ia - x1}px`, width: `${ib - ia}px` } }));
+        }
+      }
+      const text = segLabel(seg, w);
+      if (text) node.append(el("span", { class: "seg-label", text }));
+      node.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (state.suppressClick) { state.suppressClick = false; return; }  // war ein Ziehen, kein Klick
+        openPlaces(i);
+      });
+      track.append(node);
+    });
+    row.append(track);
+    lanes.append(row);
+  }
+
+  // ------------------------------------------------------------------ Orte-Panel: Tagesablauf und Karte
   // Wichtig: Leaflet ist mitgeliefert und holt von sich aus nichts aus dem Netz. Erst wenn hier eine
   // Karte erzeugt wird, laedt sie Kacheln - und das geschieht nur, wenn die Karte eingeschaltet ist
   // und der Nutzer sie oeffnet.
-  function locationEvents() {
-    return ((state.day && state.day.events) || []).filter((e) => e.geo);
-  }
+  function stripOf() { return (state.day && state.day.location_strip) || []; }
   function mapAllowed() {
     return !!(state.info && state.info.map_enabled && window.L);
   }
   function updateMapButton() {
     const btn = $("mapBtn");
     if (!btn) return;
-    // Auch ohne Aufenthalte oeffnen: dann zeigt die Karte den eingestellten Startpunkt.
-    btn.hidden = !mapAllowed();
+    // Auch ohne Orte oeffnen, wenn die Karte erlaubt ist: dann zeigt sie den eingestellten Startpunkt.
+    btn.hidden = !(mapAllowed() || stripOf().length);
     if (btn.hidden) $("mapPanel").hidden = true;
   }
+  // Leaflet setzt einen Text-Tooltip per innerHTML. Ortsnamen kommen aus Dawarich (oft fremde Kartendaten) und
+  // aus Eingaben - deshalb immer einen Knoten mit textContent uebergeben, nie den Text selbst.
+  function tipNode(text) { return el("div", { class: "map-tip", text }); }
   function mapHome() {
     const h = (state.info && state.info.map_home) || {};
     const lat = Number(h.lat), lon = Number(h.lon);
@@ -488,66 +593,149 @@
     state.mapLayer = L.layerGroup().addTo(state.map);
     if (home && home.label) {  // fester Bezugspunkt, sobald einer benannt ist - unabhaengig von den Tagesdaten
       L.circleMarker([home.lat, home.lon], { radius: 7, color: "#2f6fed", fillColor: "#2f6fed", fillOpacity: .5, weight: 2 })
-        .bindTooltip(home.label).addTo(state.map);
+        .bindTooltip(tipNode(home.label)).addTo(state.map);
     }
     return state.map;
   }
-  function renderMap(focus) {
-    const events = locationEvents();
+  function renderMap(fit = true) {
     if (!mapAllowed()) return;
     const map = ensureMap();
-    if (!events.length) {
-      const home = mapHome();
-      state.mapLayer.clearLayers();
-      setTimeout(() => {
-        map.invalidateSize();
-        if (home) map.setView([home.lat, home.lon], home.zoom);
-      }, 0);
-      $("mapHint").textContent = (home && home.label ? `Keine Aufenthalte an diesem Tag – Startpunkt: ${home.label}. ` : "Keine Aufenthalte an diesem Tag. ")
-        + "Kartendaten von OpenStreetMap (werden beim Anzeigen aus dem Netz geladen)";
-      return;
-    }
+    const strip = stripOf();
+    const focus = state.placeSel != null ? strip[state.placeSel] : null;
     state.mapLayer.clearLayers();
     const bounds = [];
-    for (const ev of events) {
-      const isFocus = focus && focus.id === ev.id;
-      const tip = `${ev.subject}
-${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
-      if (ev.geo.path) {
-        const line = L.polyline(ev.geo.path, { color: isFocus ? "#d23f3f" : "#0f8a6a", weight: isFocus ? 5 : 4, opacity: .9 });
-        line.bindTooltip(tip); line.addTo(state.mapLayer);
-        ev.geo.path.forEach((pt) => bounds.push(pt));
-        const ends = [ev.geo.path[0], ev.geo.path[ev.geo.path.length - 1]];
-        ends.forEach((pt, i) => L.circleMarker(pt, { radius: 5, color: "#0f8a6a", fillColor: i ? "#d23f3f" : "#ffffff", fillOpacity: 1, weight: 2 })
-          .bindTooltip(i ? "Ziel" : "Start").addTo(state.mapLayer));
-      } else {
-        const m = L.circleMarker([ev.geo.lat, ev.geo.lon], {
-          radius: isFocus ? 11 : 8, color: "#0f8a6a", fillColor: isFocus ? "#d23f3f" : "#0f8a6a", fillOpacity: .85, weight: 2 });
-        m.bindTooltip(tip); m.addTo(state.mapLayer);
-        bounds.push([ev.geo.lat, ev.geo.lon]);
+    strip.forEach((seg, i) => {
+      const isFocus = state.placeSel === i;
+      const tip = `${seg.kind === "trip" ? tripTitle(seg) : seg.label}\n${segSpan(seg)} · ${seg.duration_label}`;
+      if (seg.kind === "trip" && seg.path) {
+        const line = L.polyline(seg.path, { color: isFocus ? "#d23f3f" : "#e8890c", weight: isFocus ? 5 : 4, opacity: .9,
+                                            dashArray: seg.fully_inferred ? "6 6" : null });
+        line.bindTooltip(tipNode(tip)); line.on("click", () => selectPlace(i)); line.addTo(state.mapLayer);
+        seg.path.forEach((pt) => bounds.push(pt));
+      } else if (seg.kind === "stay" && seg.lat != null) {
+        const color = placeColor(seg);
+        const m = L.circleMarker([seg.lat, seg.lon], {
+          radius: isFocus ? 11 : 8, color, fillColor: isFocus ? "#d23f3f" : color, fillOpacity: .85, weight: 2 });
+        m.bindTooltip(tipNode(tip)); m.on("click", () => selectPlace(i)); m.addTo(state.mapLayer);
+        bounds.push([seg.lat, seg.lon]);
       }
-    }
+    });
     // Leaflet muss nach dem Einblenden neu vermessen werden, sonst bleibt die Karte grau.
     setTimeout(() => {
       map.invalidateSize();
-      if (focus && focus.geo) {
-        if (focus.geo.path) map.fitBounds(focus.geo.path, { padding: [30, 30] });
-        else map.setView([focus.geo.lat, focus.geo.lon], 16);
-      } else if (bounds.length) {
-        map.fitBounds(bounds, { padding: [30, 30] });
-      }
+      if (!fit) return;
+      if (focus && focus.kind === "trip" && focus.path) map.fitBounds(focus.path, { padding: [30, 30] });
+      else if (focus && focus.lat != null) map.setView([focus.lat, focus.lon], 16);
+      else if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+      else { const home = mapHome(); if (home) map.setView([home.lat, home.lon], home.zoom); }
     }, 0);
-    const visits = events.filter((e) => !e.geo.path).length;
-    $("mapHint").textContent = `${visits} Aufenthalte, ${events.length - visits} Fahrten · Kartendaten von OpenStreetMap (werden beim Anzeigen aus dem Netz geladen)`;
   }
-  function openMap(focus) {
-    if (!mapAllowed()) return;
+  function renderPlaceList() {
+    const list = $("placeList");
+    const strip = stripOf();
+    if (!strip.length) {
+      list.replaceChildren(el("li", { class: "pl-empty", text: "Keine Standortdaten an diesem Tag." }));
+      return;
+    }
+    list.replaceChildren(...strip.map((seg, i) => placeItem(seg, i)));
+    const sel = list.querySelector(".pl-item.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+  function placeItem(seg, i) {
+    const li = el("li", { class: `pl-item pl-${seg.kind}` + (state.placeSel === i ? " selected" : "") + (seg.fully_inferred ? " inferred" : "") });
+    li.addEventListener("click", () => selectPlace(i));
+    const swatch = el("span", { class: `pl-swatch seg-${seg.kind}` + (seg.fully_inferred ? " inferred" : "") });
+    const color = segColor(seg);
+    if (color) swatch.style.background = color;
+    const facts = [seg.duration_label];
+    if (seg.distance_label) facts.push(seg.distance_label);
+    if (seg.inferred_ms && !seg.fully_inferred) facts.push(`${seg.inferred_label} erschlossen`);
+    if (seg.fully_inferred) facts.push("erschlossen");
+    if (seg.sources && seg.sources.length) facts.push(seg.sources.join(", "));
+    let title;
+    if (seg.kind === "stay") title = seg.label;
+    else if (seg.kind === "trip") title = (MODE_ICONS[seg.mode] ? MODE_ICONS[seg.mode] + " " : "") + tripTitle(seg);
+    else title = "Ort unbekannt";
+    const main = el("span", { class: "pl-main" }, el("b", { text: title }), el("small", { text: facts.join(" · ") }));
+    if (seg.kind === "stay" && !seg.name && seg.coords_label) main.append(el("small", { text: seg.coords_label }));
+    if (seg.addresses && seg.addresses.length && seg.kind === "stay") main.append(el("small", { text: "Laut Dawarich: " + seg.addresses.join("; ") }));
+    li.append(swatch, el("span", { class: "pl-time", text: segSpan(seg) }), main);
+    if (seg.kind === "stay" && (seg.lat != null || seg.ssid)) {
+      const btn = el("button", { type: "button", class: "btn small", text: seg.name ? "Umbenennen" : "Benennen",
+                                 title: "Diesem Ort einen Namen geben – gilt sofort für alle Tage" });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); editPlaceName(li, seg); });
+      li.append(btn);
+    }
+    return li;
+  }
+  function editPlaceName(li, seg) {
+    const input = el("input", { type: "text", maxlength: "80", placeholder: "z. B. Büro, Zuhause, Kunde Muster", spellcheck: "false" });
+    input.value = seg.name || "";
+    const save = el("button", { type: "submit", class: "btn small primary", text: "Speichern" });
+    const cancel = el("button", { type: "button", class: "btn small", text: "Abbrechen" });
+    const hint = el("small", { class: "pl-hint", text: seg.lat != null
+      ? "Gilt für alle Aufenthalte im Umkreis von 150 m – auch rückwirkend."
+      : `Gilt für das WLAN „${seg.ssid}“ – auch rückwirkend.` });
+    const form = el("form", { class: "pl-edit" }, input, save, cancel, hint);
+    form.addEventListener("click", (e) => e.stopPropagation());
+    cancel.addEventListener("click", () => renderPlaceList());
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      save.disabled = true;
+      try {
+        await state.api.name_place(name, seg.lat ?? null, seg.lon ?? null, seg.name || null, seg.ssid || null);
+        await loadDay(true);   // findet den Abschnitt wieder, auch wenn er mit Nachbarn verschmolzen ist
+        openPlaces(state.placeSel);
+      } catch (err) {
+        save.disabled = false;
+        hint.textContent = errMessage(err);
+        hint.classList.add("error");
+      }
+    });
+    li.replaceChildren(form);
+    input.focus();
+    input.select();
+  }
+  function renderPlacesPanel(fit = true) {
+    const panel = $("mapPanel");
+    if (panel.hidden) return;
+    const strip = stripOf();
+    $("mapTitle").textContent = state.day ? `Orte am ${weekday(state.day.date)}, ${fmtDate(state.day.date)}` : "Orte";
+    panel.classList.toggle("no-map", !mapAllowed());
+    renderPlaceList();
+    renderMap(fit);
+    const stays = strip.filter((s) => s.kind === "stay").length, trips = strip.filter((s) => s.kind === "trip").length;
+    $("mapHint").textContent = `${stays} Aufenthalte, ${trips} Fahrten · schraffiert = ohne Messung, erschlossen`
+      + (mapAllowed() ? " · Kartendaten von OpenStreetMap (werden beim Anzeigen aus dem Netz geladen)" : "");
+  }
+  // Nach einem Neuladen den gewaehlten Abschnitt wiederfinden: derselbe, der die Mitte des alten umfasst.
+  function placeAnchor() {
+    const seg = state.placeSel != null ? stripOf()[state.placeSel] : null;
+    return seg ? { kind: seg.kind, mid: (seg.real_start + seg.real_end) / 2 } : null;
+  }
+  function findPlace(anchor, strip) {
+    if (!anchor) return null;
+    const hits = strip.map((s, i) => [s, i]).filter(([s]) => s.real_start <= anchor.mid && anchor.mid < s.real_end);
+    const same = hits.find(([s]) => s.kind === anchor.kind) || hits[0];
+    return same ? same[1] : null;
+  }
+  function selectPlace(i) {
+    state.placeSel = state.placeSel === i ? null : i;
+    renderLanes();
+    renderPlacesPanel();
+  }
+  function openPlaces(i) {
+    state.placeSel = i;
     $("mapPanel").hidden = false;
-    renderMap(focus);
+    renderLanes();
+    renderPlacesPanel();
+    $("mapPanel").scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
   function toggleMap() {
     const panel = $("mapPanel");
-    if (panel.hidden) openMap(null); else panel.hidden = true;
+    if (panel.hidden) openPlaces(null); else panel.hidden = true;
   }
   function updateNowMarker() {
     const marker = $("nowMarker");

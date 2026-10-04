@@ -1,9 +1,10 @@
 """Welche Funktionen in dieser Ausgabe von Zeitspur enthalten sind.
 
-Die Entwicklerausgabe (Quelltext, normaler Build) enthaelt alles. Der Release-Build (build.ps1 -Release)
-packt Funktionen, die noch nicht fertig sind, gar nicht erst ein - derzeit die Standort-Historie (Dawarich)
-samt Karte und bekannten Orten. Massgeblich ist allein, ob das Modul im Paket steckt: Einen Schalter, den
-man beim Bauen vergessen koennte, gibt es nicht.
+Seit 0.4.0 enthalten alle Ausgaben alles, auch die Standort-Spur (location.py) mit Dawarich, Windows-Standort,
+Karte und bekannten Orten. Der Mechanismus bleibt fuer kuenftige unfertige Funktionen: Laesst der Release-Build
+(build.ps1 -Release, RELEASE_EXCLUDES in zeitspur.spec) ein Modul weg, blendet das Programm die Funktion aus.
+Massgeblich ist allein, ob das Modul im Paket steckt: Einen Schalter, den man beim Bauen vergessen koennte, gibt
+es nicht.
 
 Ebenso bei Updates: Nur der Release-Build bringt die Datei release_channel.txt mit (zeitspur.spec legt sie
 an) und aktualisiert sich selbst. Der eigene Build und der Quelltextbetrieb nicht - ein Release ersetzte dort
@@ -15,8 +16,8 @@ import os
 from importlib.util import find_spec
 from pathlib import Path
 
-# Standort-Historie (Plugin "dawarich"), Karte und bekannte Orte
-LOCATIONS: bool = find_spec("zeitspur.dawarich") is not None
+# Standort-Spur (location.py) samt Plugins "dawarich" und "windows_location", Karte und bekannten Orten
+LOCATIONS: bool = find_spec("zeitspur.location") is not None and find_spec("zeitspur.dawarich") is not None
 
 
 def _update_channel() -> str | None:

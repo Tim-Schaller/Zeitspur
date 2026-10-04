@@ -139,7 +139,7 @@ class Config:
         # Bekannte Orte gehoeren zur Standort-Historie. Fehlt sie in dieser Ausgabe, bleiben die Eintraege
         # ungeprueft liegen (sie wirken ja nicht) - statt dass jede Konfiguration mit Orten scheitert.
         if edition.LOCATIONS:
-            from .dawarich import parse_known_place
+            from .location import parse_known_place
 
             for entry in self.known_places:
                 try:
@@ -196,10 +196,19 @@ _regex_cache: dict[tuple[str, ...], list[re.Pattern[str]]] = {}
 _REDOS_PROBES = ["a" * 26 + "!", "0" * 26 + "!", " " * 26 + "X", ("ab" * 13) + "!"]
 _REDOS_BUDGET_S = 0.25
 
+# Strukturelle Ablehnung der klassischen Backtracking-Signatur (ein Quantor auf einer Gruppe, die selbst einen
+# unbegrenzten Quantor enthaelt, z. B. (a+)+, (.*)* ). Das greift unabhaengig davon, welche Eingabe ein Angreifer
+# spaeter liefert - die Sonden oben koennen je nach Musterform daneben treffen.
+_NESTED_QUANT = re.compile(r"""\((?:\?[:=!][^()]*|[^()]*)[*+][^()]*\)\s*[*+{]""", re.VERBOSE)
+
 
 def _assert_regex_safe(pattern: re.Pattern[str], raw: str, name: str) -> None:
     import time
 
+    if _NESTED_QUANT.search(raw):
+        raise ConfigError(
+            f"{name}: {raw!r} enthaelt verschachtelte Quantoren (z. B. (a+)+) und kann die Aufnahme durch "
+            "katastrophales Backtracking blockieren. Bitte vereinfachen.")
     for probe in _REDOS_PROBES:
         start = time.perf_counter()
         pattern.search(probe)

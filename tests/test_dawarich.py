@@ -109,6 +109,9 @@ def test_credentials_reject_http(tmp_path):
 class _Handler(BaseHTTPRequestHandler):
     visits: list = []
     tracks: list = []
+    points: list | None = None   # None: /api/v1/points gibt es nicht (404, wie hinter einem engen Proxy)
+    cap: int | None = None       # Server deckelt per_page
+    total_header: bool = True
     seen: list = []
     status: int = 200
 
@@ -118,10 +121,22 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_response(_Handler.status)
             self.end_headers()
             return
+        headers = {}
         if self.path.startswith("/api/v1/visits"):
             body = json.dumps(_Handler.visits).encode()
         elif self.path.startswith("/api/v1/tracks"):
             body = json.dumps({"type": "FeatureCollection", "features": _Handler.tracks}).encode()
+        elif self.path.startswith("/api/v1/points") and _Handler.points is not None:
+            from urllib.parse import parse_qs, urlsplit
+            q = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            lo = datetime.fromisoformat(q["start_at"].replace("Z", "+00:00")).timestamp()
+            hi = datetime.fromisoformat(q["end_at"].replace("Z", "+00:00")).timestamp()
+            hits = [p for p in _Handler.points if lo <= p["timestamp"] <= hi]
+            per, page = int(q.get("per_page", 100)), int(q.get("page", 1))
+            per = min(per, _Handler.cap or per)
+            body = json.dumps(hits[(page - 1) * per:page * per]).encode()
+            if _Handler.total_header:
+                headers["X-Total-Pages"] = str(max(1, -(-len(hits) // per)))
         else:
             self.send_response(404)
             self.end_headers()
@@ -129,6 +144,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in headers.items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -137,8 +154,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def server():
+def server(monkeypatch):
     _Handler.visits, _Handler.tracks, _Handler.seen, _Handler.status = [], [], [], 200
+    _Handler.points, _Handler.cap, _Handler.total_header = None, None, True
+    monkeypatch.setattr(DawarichClient, "MIN_REQUEST_INTERVAL_S", 0)   # Tempolimit nur gegen den echten Server
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv
@@ -279,7 +298,7 @@ def test_track_event_carries_path_for_the_map():
 # --------------------------------------------------------------------------- Bekannte Orte
 
 def test_parse_known_place_and_errors():
-    from zeitspur.dawarich import DEFAULT_PLACE_RADIUS_M, parse_known_place
+    from zeitspur.location import DEFAULT_PLACE_RADIUS_M, parse_known_place
     p = parse_known_place("Büro;52.5162746;13.3777041")
     assert p.name == "Büro" and p.radius_m == DEFAULT_PLACE_RADIUS_M
     assert parse_known_place("Kunde;53,55;9,99;300").radius_m == 300  # Komma als Dezimaltrenner
@@ -289,7 +308,7 @@ def test_parse_known_place_and_errors():
 
 
 def test_distance_and_match_place():
-    from zeitspur.dawarich import KnownPlace, distance_m, match_place
+    from zeitspur.location import KnownPlace, distance_m, match_place
     buero = KnownPlace("Büro", 52.5162746, 13.3777041, 150)
     fern = KnownPlace("Kunde", 53.55, 9.99, 300)
     assert 90 < distance_m(52.5162746, 13.3777041, 52.5171267, 13.3777041) < 100  # ~95 m
@@ -303,7 +322,7 @@ def test_distance_and_match_place():
 
 def test_places_from_config_includes_named_map_home():
     from zeitspur.config import Config
-    from zeitspur.dawarich import places_from_config
+    from zeitspur.location import places_from_config
     assert places_from_config(Config()) == []   # ab Werk kein Ort eingebaut
     home = {"map_home_label": "Büro", "map_home_lat": 52.5163, "map_home_lon": 13.3777}
     places = places_from_config(Config(known_places=["Zuhause;52.52;13.41"], **home))
@@ -455,3 +474,155 @@ def test_mode_kind():
     assert dawarich._mode_kind("✈️") == "motor" and dawarich._mode_kind("🚗") == "motor"
     assert dawarich._mode_kind("🚴") == "rad" and dawarich._mode_kind("🚶") == "fuss"
     assert dawarich._mode_kind("📍") == "halt" and dawarich._mode_kind(None) == "halt"
+
+
+# --------------------------------------------------------------------------- GPS-Rohpunkte
+
+def test_punkte_in_allen_schreibweisen():
+    p = dawarich.parse_point({"latitude": "52.52", "longitude": "13.405", "timestamp": 1_788_940_800, "accuracy": 12})
+    assert (p.ts, p.lat, p.lon, p.acc) == (1_788_940_800_000, 52.52, 13.405, 12.0)
+    wkt = dawarich.parse_point({"lonlat": "POINT (13.405 52.52)", "timestamp": "1788940800"})
+    assert (wkt.lat, wkt.lon, wkt.ts) == (52.52, 13.405, 1_788_940_800_000)
+    iso = dawarich.parse_point({"latitude": 52.5, "longitude": 13.4, "timestamp": "2026-09-09T08:00:00Z"})
+    assert iso.ts == timeutil.iso_to_ms("2026-09-09T08:00:00Z")
+    assert dawarich.parse_point({"latitude": None, "longitude": 13.4, "timestamp": 1}) is None
+    assert dawarich.parse_point({"latitude": 52.5, "longitude": 13.4}) is None
+    assert dawarich.parse_point("kaputt") is None
+
+
+def test_welche_tage_neu_geholt_werden():
+    now = timeutil.to_ms(datetime(2026, 9, 10, 9, 0))                    # Donnerstag 09:00
+    d = date(2026, 9, 10)
+    fetched = {"2026-09-07": now - 2 * 86_400_000,                       # lange nach Tagesende geholt: fertig
+               "2026-09-09": timeutil.day_bounds(date(2026, 9, 9))[1] + 3_600_000}   # erst 01:00: Nachzuegler moeglich
+    assert dawarich.days_to_fetch(date(2026, 9, 7), d + timedelta(days=3), fetched, now) == [
+        date(2026, 9, 8), date(2026, 9, 9), d]                            # Zukunft nie, heute immer
+
+
+def _gps_day(day: date):
+    """Ein erfundener Arbeitstag als Rohpunkte: zu Hause, Fahrt, Buero, Fahrt, zu Hause."""
+    home, office = (52.52, 13.405), (52.50, 13.35)
+    base = datetime.combine(day, datetime.min.time()).astimezone()
+    t = lambda h, m=0: int((base + timedelta(hours=h, minutes=m)).timestamp())  # noqa: E731
+    pts = []
+
+    def stay(at, a, b):
+        for ts in range(a, b + 1, 120):
+            pts.append({"latitude": at[0], "longitude": at[1], "timestamp": ts, "accuracy": 10})
+
+    def drive(a, b, t0, t1):
+        n = (t1 - t0) // 20
+        for k in range(1, n):
+            pts.append({"latitude": a[0] + (b[0] - a[0]) * k / n, "longitude": a[1] + (b[1] - a[1]) * k / n,
+                        "timestamp": t0 + (t1 - t0) * k // n, "accuracy": 8})
+
+    stay(home, t(6), t(7, 55))
+    drive(home, office, t(7, 55), t(8, 0))
+    stay(office, t(8, 0), t(16, 30))
+    drive(office, home, t(16, 30), t(16, 35))
+    stay(home, t(16, 35), t(22))
+    return pts, t
+
+
+def test_sync_aus_rohpunkten(server, storage):
+    day = date(2026, 9, 9)
+    _Handler.points, t = _gps_day(day)
+    _Handler.visits = [{"id": 1, "name": "Büro", "status": "suggested",
+                        "started_at": datetime.fromtimestamp(t(8, 10), tz=timezone.utc).isoformat(),
+                        "ended_at": datetime.fromtimestamp(t(16, 0), tz=timezone.utc).isoformat()}]
+    now = timeutil.to_ms(datetime(2026, 9, 11, 12, 0))
+    rows = dawarich.sync(_client(server), storage, day, day, now_ms=now)
+    stays = [r for r in rows if r["category"] == "visit"]
+    trips = [r for r in rows if r["category"] == "track"]
+    assert len(stays) == 3 and len(trips) == 2
+    assert [json.loads(r["extra"]).get("name") for r in stays] == [None, "Büro", None]   # Name aus Dawarich
+    hin = json.loads(trips[0]["extra"])
+    assert 3.5 < hin["distance_km"] < 4.5 and hin["mode"] == "car" and len(hin["path"]) >= 2
+    assert hin["from"] == pytest.approx([52.52, 13.405], abs=1e-3)
+    # Punkte liegen verschluesselt in der eigenen Datenbank, der Tag ist als fertig vermerkt
+    start, end = timeutil.day_bounds(day)
+    assert len(storage.location_points("dawarich", start, end)) == len(_Handler.points)
+    assert json.loads(storage.get_meta(dawarich.POINTS_META_KEY)) == {"2026-09-09": now}
+    # Token nur im Header, schlanke Punkte angefordert
+    point_calls = [c for c in _Handler.seen if c["path"].startswith("/api/v1/points")]
+    assert all(c["auth"] == f"Bearer {TOKEN}" and TOKEN not in c["path"] for c in _Handler.seen)
+    assert all("slim=true" in c["path"] for c in point_calls)
+
+    # Zweiter Abgleich: der fertige Tag wird nicht erneut geholt, das Ergebnis bleibt gleich
+    _Handler.seen.clear()
+    again = dawarich.sync(_client(server), storage, day, day, now_ms=now + 600_000)
+    assert [c["path"].split("?")[0] for c in _Handler.seen].count("/api/v1/points") == 1   # nur die Probe
+    assert [(r["ts_start"], r["category"]) for r in again] == [(r["ts_start"], r["category"]) for r in rows]
+
+
+def test_rohpunkte_seitenweise(server, storage, monkeypatch):
+    monkeypatch.setattr(dawarich, "POINTS_PER_PAGE", 50)
+    day = date(2026, 9, 9)
+    _Handler.points, _ = _gps_day(day)
+    start, end = timeutil.day_bounds(day)
+    got = _client(server).fetch_points(start, end)
+    assert len(got) == len(_Handler.points) and [p.ts for p in got] == sorted(p.ts for p in got)
+
+
+def test_ohne_rohpunkte_bleiben_dawarichs_aufenthalte(server, storage):
+    """Laesst ein Proxy /api/v1/points nicht durch, gilt der alte Weg ueber visits und tracks."""
+    day = date(2026, 9, 9)
+    _Handler.visits = [{"id": 7, "name": "Büro", "status": "suggested", "started_at": "2026-09-09T08:00:00+02:00",
+                        "ended_at": "2026-09-09T12:00:00+02:00", "place": {"latitude": 52.5, "longitude": 13.35}}]
+    rows = dawarich.sync(_client(server), storage, day, day)
+    assert [r["category"] for r in rows] == ["visit"] and json.loads(rows[0]["extra"])["name"] == "Büro"
+    assert storage.get_meta(dawarich.POINTS_META_KEY) is None
+
+
+def test_verbindungstest_nennt_fehlende_rohpunkte(server):
+    msg = _client(server).test_connection()
+    assert "/api/v1/points" in msg and "Verbindung erfolgreich" in msg
+    _Handler.points = []
+    assert "Rohpunkte freigegeben" in _client(server).test_connection()
+
+
+def test_tempolimit_zwischen_anfragen(server, monkeypatch):
+    """Dawarich erlaubt 60 Anfragen je Minute - beim Nachholen vieler Tage wird gewartet."""
+    waits = []
+    monkeypatch.setattr(DawarichClient, "MIN_REQUEST_INTERVAL_S", 1.0)
+    monkeypatch.setattr(dawarich.time, "sleep", lambda s: waits.append(s))
+    c = _client(server)
+    c._get("/api/v1/visits", {})
+    c._get("/api/v1/visits", {})
+    assert len(waits) == 1 and 0 < waits[0] <= 1.0
+
+
+
+@pytest.mark.parametrize("mit_kopf", [True, False])
+def test_gedeckelte_seiten_verlieren_keine_punkte(server, mit_kopf):
+    """Deckelt der Server (oder ein Proxy) per_page, ist eine kurze Seite noch nicht die letzte."""
+    day = date(2026, 9, 9)
+    _Handler.points, _ = _gps_day(day)
+    _Handler.cap, _Handler.total_header = 100, mit_kopf
+    start, end = timeutil.day_bounds(day)
+    assert len(_client(server).fetch_points(start, end)) == len(_Handler.points)
+
+
+def test_langer_aufenthalt_bleibt_beim_abgleich_eines_einzelnen_tags_ganz(server, storage):
+    """Montagabend bis Donnerstagfrueh zu Hause: Wer spaeter nur den Dienstag abgleicht, kappt ihn nicht."""
+    home = (52.52, 13.405)
+    mon = date(2026, 9, 7)
+    base = datetime.combine(mon, datetime.min.time()).astimezone()
+    t = lambda d, h: int((base + timedelta(days=d, hours=h)).timestamp())  # noqa: E731
+    _Handler.points = [{"latitude": home[0], "longitude": home[1], "timestamp": ts, "accuracy": 10}
+                       for ts in range(t(0, 18), t(3, 8) + 1, 1800)]
+    now = timeutil.to_ms(datetime(2026, 9, 12, 12, 0))
+    rows = dawarich.sync(_client(server), storage, mon, mon + timedelta(days=3), now_ms=now)
+    storage.replace_events("dawarich", timeutil.day_bounds(mon)[0], timeutil.day_bounds(mon + timedelta(days=3))[1], rows)
+    tue = mon + timedelta(days=1)
+    again = dawarich.sync(_client(server), storage, tue, tue, now_ms=now)
+    assert [(r["ts_start"], r["ts_end"]) for r in again] == [(t(0, 18) * 1000, t(3, 8) * 1000)]
+
+
+def test_entfernen_waehrend_des_abgleichs_schreibt_nichts_mehr(server, storage):
+    day = date(2026, 9, 9)
+    _Handler.points, _ = _gps_day(day)
+    with pytest.raises(dawarich.Removed):
+        dawarich.sync(_client(server), storage, day, day, still_wanted=lambda: False)
+    start, end = timeutil.day_bounds(day)
+    assert storage.location_points("dawarich", start, end) == [] and storage.get_meta(dawarich.POINTS_META_KEY) is None

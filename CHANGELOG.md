@@ -5,15 +5,22 @@ Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen
 
 ## 0.4.0
 
+- Standort-Spur: Die Zeile „Orte“ zeigt den Tag als lückenlose Leiste – „08:20–16:40 Büro, 25 min Fahrt nach
+  Hause …“. Sie führt WLAN-Netze, GPS vom Handy (Plugin für die eigene Dawarich-Instanz) und die Ortung von
+  Windows (neues Plugin) zusammen; Erschlossenes ist schraffiert. Ein Klick öffnet den Tagesablauf mit Karte,
+  dort lassen sich Orte benennen – auch Claude erzählt den Tag dann so.
 - Plugin-Browser (Knopf „Plugins“ oben rechts): alle Plugins mit Suche und Kategorien, und je Plugin, was es
-  erfasst, was gespeichert wird und wie man es einrichtet.
-- Plugins lassen sich schon in der Ersteinrichtung auswählen – nichts ist vorausgewählt.
+  erfasst, was gespeichert wird und wie man es einrichtet. Auswählen geht schon in der Ersteinrichtung – nichts
+  ist vorausgewählt.
 - Neue Plugins ohne Konto: Gespräche in allen Apps (Zoom, Slack, Webex, STARFACE, WhatsApp, Meetings im
   Browser …), Windows-Benachrichtigungen, Browser-Verlauf, Outlook-Mails, Git-Commits, PC-Zeiten und WLAN-Netze
   als Ortshinweis.
 - Neue Online-Plugins: Kalender per ICS-Link (Google, iCloud, neues Outlook, Nextcloud …) und GitHub.
 - Zeitstrahl mit eigenen Zeilen für Gespräche, Mails, Mitteilungen, Web, Entwicklung und PC; Claude bekommt zu
   jedem Ereignis die Details.
+- Sicherheit: strengere Schutzregeln für die Oberfläche, Zugangsdaten gehen bei Weiterleitungen nie an fremde
+  Server, keine Weiterleitung auf interne Adressen, Updates nie auf eine ältere Version, und die Ausschlussliste
+  greift für jedes sichtbare Fenster, nicht nur das vorderste.
 - Der Update-Hinweis nennt die wichtigsten Neuerungen und verlinkt alle Änderungen auf GitHub.
 
 ## 0.3.2

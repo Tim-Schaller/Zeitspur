@@ -63,6 +63,8 @@ class EventSync:
                 continue
             try:
                 rows = plugin.fetch(ctx, start, end)
+                if plugin.id not in self.cfg.installed_plugins:
+                    continue   # waehrend des Abrufs entfernt - seine Daten sind geloescht und bleiben es
                 report.counts[plugin.id] = self.storage.replace_events(plugin.id, window_start, window_end, rows)
             except plugin.expected_errors() as e:
                 # Ein Plugin, dessen Dienst gerade nicht erreichbar ist, darf die anderen nicht aufhalten.

@@ -33,8 +33,12 @@ def target_command() -> str:
     runner = exe.with_name("pythonw.exe")
     if not runner.exists():
         runner = exe
-    code = f"import sys; sys.path.insert(0, r'{root}'); from zeitspur.service_main import run; run()"
-    return f'"{runner}" -c "{code}" --autostart'
+    # Projektpfad als vollstaendig maskiertes Python-Literal (repr) einsetzen, damit kein Pfadanteil
+    # (z. B. mit Apostroph) als Code interpretiert werden kann; verbleibende " fuer die cmd-Doppelquotes escapen.
+    root_literal = repr(str(root))
+    code = f"import sys; sys.path.insert(0, {root_literal}); from zeitspur.service_main import run; run()"
+    code_cmd = code.replace('"', '\\"')
+    return f'"{runner}" -c "{code_cmd}" --autostart'
 
 
 def current_command() -> str | None:

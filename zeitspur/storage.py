@@ -23,7 +23,7 @@ from .crypto import open_database
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 OCR_PENDING, OCR_DONE, OCR_FAILED = 0, 1, 2
 MAX_OCR_ATTEMPTS = 3              # danach bleibt ein Eintrag endgueltig ohne Text
 EVENT_COLUMNS = ("id, source, ext_id, ts_start, ts_end, subject, location, organizer, attendees, "
@@ -93,6 +93,16 @@ SCHEMA_SQL = (
         ts_start INTEGER NOT NULL,            -- fuer die Retention-Bereinigung
         seen_at INTEGER NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS ix_teams_seen_ts ON teams_seen(ts_start)",
+    # v5: Standortpunkte der Ortsquellen (GPS aus Dawarich, Windows-Standort). Daraus berechnet Zeitspur
+    # Aufenthalte und Fahrten selbst. Ein Punkt je Quelle und Millisekunde; mehr als Ort und Genauigkeit
+    # wird nicht gespeichert.
+    """CREATE TABLE IF NOT EXISTS location_points(
+        source TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        accuracy REAL,
+        PRIMARY KEY(source, ts)) WITHOUT ROWID""",
 )
 
 ENTRY_COLUMNS = (
@@ -209,13 +219,17 @@ class _Queries:
                                 (start_ms, end_ms), 0))
 
     # ---- Kalender-/Anruf-Ereignisse (Phase 2) ----------------------------
-    def events_between(self, start_ms: int, end_ms: int, *, sources: list[str] | None = None) -> list[dict[str, Any]]:
+    def events_between(self, start_ms: int, end_ms: int, *, sources: list[str] | None = None,
+                       categories: list[str] | None = None) -> list[dict[str, Any]]:
         """Ereignisse (Outlook-Termine, Teams-Anrufe), die den Zeitraum [start, end) ueberlappen."""
         where = ["ts_start < ?", "ts_end >= ?"]
         params: list[Any] = [end_ms, start_ms]
         if sources:
             where.append("source IN (%s)" % ",".join("?" * len(sources)))
             params.extend(sources)
+        if categories:
+            where.append("category IN (%s)" % ",".join("?" * len(categories)))
+            params.extend(categories)
         return self._rows(
             f"SELECT {EVENT_COLUMNS} FROM calendar_events WHERE {' AND '.join(where)} ORDER BY ts_start, ts_end",
             tuple(params))
@@ -231,6 +245,11 @@ class _Queries:
         """Ein Ereignis ueber Quelle, Herkunfts-Id und Beginn (der Beginn nutzt den Index source+ts_start)."""
         return self._one(f"SELECT {EVENT_COLUMNS} FROM calendar_events WHERE source = ? AND ts_start = ? "
                          "AND ext_id = ?", (source, int(ts_start), ext_id))
+
+    def location_points(self, source: str, start_ms: int, end_ms: int) -> list[dict[str, Any]]:
+        """Standortpunkte einer Quelle im Zeitraum [start, end), zeitlich sortiert."""
+        return self._rows("SELECT ts, lat, lon, accuracy FROM location_points WHERE source = ? AND ts >= ? AND ts < ? "
+                          "ORDER BY ts", (source, int(start_ms), int(end_ms)))
 
     def teams_seen_map(self, start_ms: int | None = None, end_ms: int | None = None) -> dict[str, bool]:
         """ext_id -> involves_me fuer bereits klassifizierte Teams-Anrufe (Cache, optional zeitlich begrenzt)."""
@@ -520,6 +539,35 @@ class Storage(_Queries):
                 "DELETE FROM teams_seen WHERE ext_id IN "
                 "(SELECT ext_id FROM teams_seen WHERE ts_start < ? ORDER BY ts_start LIMIT ?)",
                 (int(cutoff_ms), int(batch))).rowcount
+
+    def replace_location_points(self, source: str, start_ms: int, end_ms: int,
+                                points: list[tuple[int, float, float, float | None]]) -> int:
+        """Ersetzt die Punkte einer Quelle im Zeitraum [start, end) durch `points` (ts, lat, lon, Genauigkeit)."""
+        with self.transaction() as con:
+            con.execute("DELETE FROM location_points WHERE source = ? AND ts >= ? AND ts < ?",
+                        (source, int(start_ms), int(end_ms)))
+            con.executemany(
+                "INSERT OR REPLACE INTO location_points(source, ts, lat, lon, accuracy) VALUES (?,?,?,?,?)",
+                [(source, int(ts), float(lat), float(lon), None if acc is None else float(acc))
+                 for ts, lat, lon, acc in points if start_ms <= ts < end_ms])
+        return len(points)
+
+    def add_location_point(self, source: str, ts: int, lat: float, lon: float, accuracy: float | None = None) -> None:
+        with self.transaction() as con:
+            con.execute("INSERT OR REPLACE INTO location_points(source, ts, lat, lon, accuracy) VALUES (?,?,?,?,?)",
+                        (source, int(ts), float(lat), float(lon), None if accuracy is None else float(accuracy)))
+
+    def delete_location_points_older_than(self, cutoff_ms: int, batch: int = 2000) -> int:
+        with self.transaction() as con:
+            # WITHOUT ROWID: Zeilen ueber den Primaerschluessel (source, ts) auswaehlen
+            return con.execute(
+                "DELETE FROM location_points WHERE (source, ts) IN "
+                "(SELECT source, ts FROM location_points WHERE ts < ? ORDER BY ts LIMIT ?)",
+                (int(cutoff_ms), int(batch))).rowcount
+
+    def delete_location_points_of_source(self, source: str) -> int:
+        with self.transaction() as con:
+            return con.execute("DELETE FROM location_points WHERE source = ?", (source,)).rowcount
 
     def delete_events_of_source(self, source: str) -> int:
         """Alle Ereignisse einer Quelle - beim Entfernen des zugehoerigen Plugins."""

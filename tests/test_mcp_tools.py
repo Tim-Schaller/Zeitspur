@@ -2,7 +2,8 @@ import asyncio
 import io
 import json
 import os
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import psutil
@@ -95,6 +96,25 @@ def test_time_context(seeded):
     assert len(ctx["last_7_days"]) == 7 and ctx["retention_days"] == 14
     assert ctx["total_entries"] == 4 and ctx["recorded_days"] == ["2026-09-09", "2026-09-10"]
     assert ctx["first_recorded"].startswith("2026-09-09T11:50:00")
+
+
+@pytest.mark.parametrize("instant, expected", [
+    (datetime(2026, 7, 15, 10, tzinfo=timezone.utc), True),     # Sommerzeit
+    (datetime(2026, 1, 15, 10, tzinfo=timezone.utc), False),    # Winterzeit
+])
+def test_time_context_is_dst(seeded, monkeypatch, instant, expected):
+    """is_dst kommt aus time.localtime fuer genau den Zeitpunkt von 'now' - unabhaengig von Systemzeit und -zone."""
+    tools, _ = seeded
+    ts = instant.timestamp()
+
+    def fake_localtime(secs=None):
+        # Erfundene Zone: Sommerzeit von April bis Oktober (UTC-Monat), sonst Winterzeit.
+        t = time.gmtime(time.time() if secs is None else secs)
+        return time.struct_time((*t[:8], 1 if 4 <= t.tm_mon <= 10 else 0))
+
+    monkeypatch.setattr(time, "time", lambda: ts)
+    monkeypatch.setattr(time, "localtime", fake_localtime)
+    assert tools.get_time_context()["is_dst"] is expected
 
 
 def test_search_activity(seeded):

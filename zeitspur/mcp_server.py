@@ -294,13 +294,16 @@ class ActivityTools:
         self.reader = reader
 
     def get_time_context(self) -> dict[str, Any]:
-        now = datetime.now().astimezone()
+        ts = time.time()
+        now = datetime.fromtimestamp(ts).astimezone()
         info: dict[str, Any] = {
             "now": now.isoformat(timespec="seconds"),
             "today": now.date().isoformat(),
             "weekday": WEEKDAYS[now.weekday()],
             "utc_offset": now.strftime("%z"),          # z. B. +0200 (time.tzname ist unter Windows oft falsch kodiert)
-            "is_dst": bool(now.dst()),
+            # Nicht now.dst(): astimezone() ohne Zone liefert einen festen Offset, dessen dst() immer None ist.
+            # tm_isdst ist -1, wenn das System es nicht weiss - dann lieber False.
+            "is_dst": time.localtime(ts).tm_isdst > 0,
             "yesterday": (now.date() - timedelta(days=1)).isoformat(),
             "last_7_days": {WEEKDAYS[(now.date() - timedelta(days=i)).weekday()]: (now.date() - timedelta(days=i)).isoformat()
                             for i in range(1, 8)},

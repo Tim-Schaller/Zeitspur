@@ -24,6 +24,7 @@
       <span id="statePill" class="pill">…</span>
       <button id="pauseBtn" class="btn" title="Aufnahme pausieren oder fortsetzen">Pause</button>
       <button id="mapBtn" class="btn" title="Karte der Aufenthalte und Fahrten dieses Tages" hidden>Karte</button>
+      <button id="pluginsBtn" class="btn" title="Plugins: Termine, Gespräche, Mails, Mitteilungen und mehr in den Zeitstrahl holen">Plugins</button>
       <button id="settingsBtn" class="btn icon" title="Einstellungen">&#9881;</button>
     </div>
   </header>
@@ -32,10 +33,13 @@
   <div id="updateBar" class="banner update" hidden>
     <span id="updateText"></span>
     <span class="update-actions">
-      <button id="updateNotesBtn" class="btn small" type="button">Was ist neu?</button>
       <button id="updateBtn" class="btn small primary" type="button">Jetzt aktualisieren</button>
     </span>
-    <div id="updateNotes" class="update-notes" hidden></div>
+    <div id="updateNews" class="update-news" hidden>
+      <b id="updateNewsTitle">Neu in dieser Version</b>
+      <ul id="updateList"></ul>
+      <button id="updateLink" class="linklike" type="button">Alle Änderungen auf GitHub ↗</button>
+    </div>
   </div>
 
   <main id="main">
@@ -85,6 +89,26 @@
           </div>
         </div>
       </section>
+    </section>
+
+    <section id="pluginsView" class="view plugins-view" hidden>
+      <div class="plugins-head">
+        <div>
+          <h2>Plugins</h2>
+          <p id="pluginSummary" class="muted"></p>
+        </div>
+        <button id="pluginsBack" class="btn" type="button">Zurück zum Zeitstrahl</button>
+      </div>
+      <div class="plugin-toolbar">
+        <input type="search" id="pluginSearch" placeholder="Plugins durchsuchen – z. B. Kalender, Zoom, Browser …" autocomplete="off" spellcheck="false">
+        <label class="check"><input type="checkbox" id="pluginOnlyInstalled"> nur hinzugefügte</label>
+        <label class="check"><input type="checkbox" id="pluginOnlyLocal"> nur lokal, ohne Konto</label>
+      </div>
+      <div id="pluginCats" class="chips"></div>
+      <div class="plugin-layout">
+        <div id="pluginGrid" class="plugin-groups"></div>
+        <aside id="pluginDetail" class="plugin-detail"></aside>
+      </div>
     </section>
 
     <section id="setupView" class="view setup" hidden>

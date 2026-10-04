@@ -34,8 +34,7 @@ UI_DIR = Path(__file__).resolve().parent
 THUMB_CACHE_SIZE = 64
 DEFAULT_THUMB_WIDTH = 800
 OCR_STATUS_LABELS = {OCR_PENDING: "Texterkennung ausstehend", OCR_DONE: "Text erkannt", OCR_FAILED: "Texterkennung fehlgeschlagen"}
-EVENT_CATEGORY_LABELS = {"meeting": "Besprechung", "appointment": "Termin", "call": "Anruf",
-                         "visit": "Aufenthalt", "track": "Fahrt"}
+EVENT_CATEGORY_LABELS = plugins.CATEGORY_LABELS
 
 
 DIRECTION_LABELS = {"outgoing": "ausgehend", "incoming": "eingehend"}
@@ -330,6 +329,8 @@ class Bridge:
             "today": date.today().isoformat(),
             "window_visible": bool(getattr(app, "_visible", True)),
             "installed_plugins": list(app.cfg.installed_plugins),
+            "lane_order": list(plugins.LANES),
+            "plugin_categories": list(plugins.CATEGORIES),
             "map_enabled": bool(app.cfg.map_enabled and edition.LOCATIONS),
             "features": edition.features(),
             "map_tile_url": app.cfg.map_tile_url,
@@ -351,6 +352,10 @@ class Bridge:
         """Knopf "Nach Updates suchen" in den Einstellungen - das Ergebnis zeigt die Seite selbst."""
         self._app.check_updates(notify=False)
         return self._app.update_status()
+
+    def open_release_page(self) -> bool:
+        """Link "Alle Änderungen auf GitHub" im Update-Hinweis. Keine Adresse aus der Seite: die baut die App."""
+        return self._app.open_release_page()
 
     def list_days(self) -> list[str]:
         return self._store().list_days()
@@ -469,17 +474,12 @@ class Bridge:
 
     def save_plugin_credentials(self, plugin_id: str, values: dict[str, Any]) -> dict[str, Any]:
         plugin = plugins.get(str(plugin_id))
-        values = values if isinstance(values, dict) else {}
-        clean: dict[str, str] = {}
-        for f in plugin.credential_fields:
-            raw = values.get(f.key)
-            value = "" if raw is None else str(raw)
-            if f.kind != "secret":
-                value = value.strip()
-            if not value.strip():
-                raise ValueError(f"{f.label} ist erforderlich.")
-            clean[f.key] = value
+        clean = plugin.clean_credentials(values if isinstance(values, dict) else {})
         return {"ok": True, "message": self._app.save_plugin_credentials(plugin.id, clean)}
+
+    def save_plugin_settings(self, plugin_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        """Einstellungen eines Plugins pruefen und speichern; liefert die frische Beschreibung."""
+        return self._app.save_plugin_settings(str(plugin_id), values if isinstance(values, dict) else {})
 
     def test_plugin(self, plugin_id: str) -> dict[str, str]:
         return {"message": self._app.test_plugin(str(plugin_id))}
@@ -534,10 +534,16 @@ class Bridge:
     def complete_setup(self, values: dict[str, Any]) -> dict[str, Any]:
         values = dict(values)
         wanted = self._take_autostart(values)
+        # In der Ersteinrichtung gewaehlte Plugins: nur bekannte und auf diesem PC verfuegbare
+        chosen = values.pop("installed_plugins", None) or []
+        known = {p.id: p for p in plugins.PLUGINS}
+        installed = [pid for pid in dict.fromkeys(str(x) for x in chosen)
+                     if pid in known and known[pid].unavailable_reason() is None]
         try:
             cfg = coerce_config(values)
         except ConfigError as e:
             raise ValueError(str(e)) from e
+        cfg.installed_plugins = installed
         ok = self._app.complete_first_run(cfg)
         if wanted is not None:
             autostart.set_enabled(wanted)
@@ -560,6 +566,21 @@ class Bridge:
             return None
         folder = result[0] if isinstance(result, (list, tuple)) else str(result)
         return str(Path(folder) / DB_FILE_NAME)
+
+    def choose_directory(self) -> str | None:
+        """Ordnerauswahl fuer Plugin-Einstellungen (etwa die Ordner mit Git-Repositories)."""
+        window = self._app.window
+        if window is None:
+            return None
+        import webview
+
+        dialog_type = getattr(getattr(webview, "FileDialog", None), "FOLDER", None)
+        if dialog_type is None:  # pragma: no cover - aeltere pywebview-Version
+            dialog_type = webview.FOLDER_DIALOG  # type: ignore[attr-defined]
+        result = window.create_file_dialog(dialog_type, directory=str(Path.home()))
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else str(result)
 
     def open_logs(self) -> bool:
         self._app.open_logs()

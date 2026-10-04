@@ -1,4 +1,24 @@
-# Zeitspur
+<p align="center">
+  <img src="docs/images/logo.png" width="96" height="96" alt="Zeitspur-Logo">
+</p>
+
+<h1 align="center">Zeitspur</h1>
+
+<p align="center">
+  Ihr Arbeitstag als durchsuchbarer Zeitstrahl – lokal, verschlüsselt und mit Anbindung an Claude.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Tim-Schaller/Zeitspur/releases/latest"><b>Herunterladen</b></a> ·
+  <a href="https://timschaller-de.pages.dev/de/projects/zeitspur/">Projektseite</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#plugins">Plugins</a> ·
+  <a href="CHANGELOG.md">Änderungen</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.webp" alt="Zeitspur – lokal, verschlüsselt, durchsuchbar">
+</p>
 
 Zeitspur ist ein lokaler, verschlüsselter Aktivitätsverlauf für Windows – nach dem Vorbild von „Windows Recall“:
 Ein Tray-Dienst macht in regelmäßigen Abständen Screenshots aller Monitore, erkennt den sichtbaren Text per OCR
@@ -7,23 +27,54 @@ wann geöffnet war; ein lokaler MCP-Server erlaubt Fragen wie „Was habe ich le
 direkt in Claude. Nach 14 Tagen (konfigurierbar) werden Einträge automatisch gelöscht.
 
 Alles bleibt auf dem Rechner. Es gibt keinen Netzwerkdienst, keinen offenen Port und keine Cloud.
-Ausnahmen sind die Plugins, die Sie ausdrücklich hinzufügen: Outlook (lokal per COM), Teams und die Standort-Historie (beide zu Ihren eigenen Servern bzw. Ihrem Mandanten), die standardmäßig ausgeschaltete Karte, die Kacheln von OpenStreetMap lädt, und die [Update-Prüfung](#updates) der Release-Ausgabe: Sie fragt bei GitHub nach, ob es eine neue Version gibt – von Ihren Daten wird dabei nichts übertragen.
+Ausnahmen sind die Online-[Plugins](#plugins), die Sie ausdrücklich hinzufügen (Kalender per ICS-Link, GitHub, Teams, Standort-Historie – jeweils nur zu dem Dienst, den Sie eintragen), die standardmäßig ausgeschaltete Karte, die Kacheln von OpenStreetMap lädt, und die [Update-Prüfung](#updates) der Release-Ausgabe: Sie fragt bei GitHub nach, ob es eine neue Version gibt – von Ihren Daten wird dabei nichts übertragen. Alle anderen Plugins lesen nur, was ohnehin auf dem PC liegt.
 
 ## Inhalt
 
-1. [Funktionsweise](#funktionsweise)
-2. [Installation](#installation)
-3. [Ersteinrichtung](#ersteinrichtung)
-4. [Bedienung: Tray-Menü und Zeitstrahl](#bedienung-tray-menü-und-zeitstrahl)
-5. [Konfiguration](#konfiguration)
-6. [Claude anbinden (MCP-Server)](#claude-anbinden-mcp-server)
-7. [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)
-8. [Performance und Speicherbedarf](#performance-und-speicherbedarf)
-9. [Updates](#updates)
-10. [Deinstallation](#deinstallation)
-11. [Fehlerbehebung](#fehlerbehebung)
-12. [Entwicklung und Build](#entwicklung-und-build)
-13. [Lizenz](#lizenz)
+1. [Screenshots](#screenshots)
+2. [Funktionsweise](#funktionsweise)
+3. [Installation](#installation)
+4. [Ersteinrichtung](#ersteinrichtung)
+5. [Bedienung: Tray-Menü und Zeitstrahl](#bedienung-tray-menü-und-zeitstrahl)
+6. [Konfiguration](#konfiguration)
+7. [Claude anbinden (MCP-Server)](#claude-anbinden-mcp-server)
+8. [Plugins](#plugins)
+9. [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)
+10. [Performance und Speicherbedarf](#performance-und-speicherbedarf)
+11. [Updates](#updates)
+12. [Deinstallation](#deinstallation)
+13. [Fehlerbehebung](#fehlerbehebung)
+14. [Entwicklung und Build](#entwicklung-und-build)
+15. [Lizenz](#lizenz)
+
+## Screenshots
+
+Alle Bilder zeigen die echte Oberfläche mit erfundenen Demo-Daten.
+
+**Der Zeitstrahl eines Tages.** Oben stehen die Ereignisse der Plugins in eigenen Zeilen: Termine, Gespräche,
+Mails, Mitteilungen, besuchte Websites, Commits, PC-Zeiten und Orte. Darunter liegt die Bildschirmaktivität,
+ein Block je Programm und Fenster.
+
+![Zeitstrahl mit Zeilen für Termine, Gespräche, Mails, Mitteilungen, Web, Entwicklung, PC, Orte und Bildschirm](docs/images/zeitstrahl.png)
+
+**Ein Klick auf einen Block** zeigt den gespeicherten Screenshot, das Programm, den Zeitraum und den erkannten Text.
+Mit „Vorheriges“ und „Nächstes Bild“ blättern Sie durch den Block.
+
+![Detailansicht eines Bildschirm-Blocks mit Screenshot und erkanntem Text](docs/images/details.png)
+
+**Der Plugin-Browser** zeigt alle Plugins mit Suche und Kategorien. Zu jedem Plugin steht, was es erfasst, was
+gespeichert wird und wie man es einrichtet. Die meisten Plugins arbeiten lokal, ohne Konto und ohne Netz.
+
+![Plugin-Browser mit Kacheln nach Kategorien und der Detailansicht von „Gespräche in allen Apps“](docs/images/plugins.png)
+
+**Ersteinrichtung:** Welche Plugins mitlaufen, lässt sich schon beim ersten Start auswählen. Vorausgewählt ist nichts.
+
+<img src="docs/images/ersteinrichtung.png" width="640" alt="Ersteinrichtung mit der Auswahl der Plugins">
+
+**Updates:** Liegt eine neue Version bereit, zeigt Zeitspur die wichtigsten Neuerungen und verlinkt alle Änderungen
+auf GitHub.
+
+![Update-Hinweis mit den Neuerungen der neuen Version und einem Link zu GitHub](docs/images/update.png)
 
 ## Funktionsweise
 
@@ -74,9 +125,11 @@ Hinweis: Die Programmdateien sind nicht signiert. Windows SmartScreen kann beim 
 
 ## Ersteinrichtung
 
-Beim ersten Start öffnet sich das Fenster mit einem Formular: Aufnahmeintervall, Aufbewahrungsdauer,
-Speicherort der Datenbank, Bildbreite/Qualität, OCR-Sprachen und Ausschlusslisten. Mit „Speichern und
-starten“ wird die Konfiguration geschrieben, der DPAPI-Schlüssel erzeugt und die Datenbank angelegt.
+Beim ersten Start öffnet sich das Fenster mit einem Formular: oben die Auswahl der [Plugins](#plugins)
+(optional, nichts ist vorausgewählt), darunter Aufnahmeintervall, Aufbewahrungsdauer, Speicherort der Datenbank,
+Bildbreite/Qualität, OCR-Sprachen und Ausschlusslisten. Mit „Speichern und starten“ wird die Konfiguration
+geschrieben, der DPAPI-Schlüssel erzeugt und die Datenbank angelegt. Braucht ein gewähltes Plugin noch
+Zugangsdaten oder Einstellungen, erscheint danach ein Hinweis mit „Jetzt einrichten“.
 Danach beginnt die Aufnahme; das Fenster kann geschlossen werden – der Dienst läuft im Tray weiter.
 
 Alle Werte lassen sich später über das Zahnrad-Symbol im Fenster oder direkt in `config.yaml` ändern.
@@ -280,28 +333,57 @@ Kunde XY offen?“, „Welche Programme habe ich am Dienstag am längsten benutz
 Eintrag 4711.“ Zeitstempel aus `get_activity_at` lassen sich in derselben Unterhaltung mit anderen Quellen
 (z. B. einem Plaud-Connector) abgleichen.
 
-## Plugins: Outlook, Teams und Standort
+## Plugins
 
-Termine, Anrufe und Orte kommen aus **Plugins**. Alle drei sind im Programm enthalten, aber keines ist aktiv,
-bevor Sie es hinzufügen: **Einstellungen (⚙) → Plugins → Hinzufügen**. Jedes Plugin bringt dort seine eigene
-Einrichtung mit (Zugangsdaten, Einstellungen, „Speichern & testen“, „Verbindung testen“).
+Termine, Gespräche, Mails, Mitteilungen, besuchte Websites, Commits, PC-Zeiten und Orte kommen aus **Plugins**.
+Alle sind im Programm enthalten, aber keines ist aktiv, bevor Sie es hinzufügen – in der **Ersteinrichtung**
+(Abschnitt „Plugins (optional)“, nichts ist vorausgewählt) oder jederzeit im **Plugin-Browser**: Knopf
+**„Plugins“** oben rechts im Fenster.
+
+Der Plugin-Browser zeigt alle Plugins als Kacheln, nach Kategorien gruppiert, mit Suche und den Filtern „nur
+hinzugefügte“ und „nur lokal, ohne Konto“. Die Kennzeichen auf jeder Kachel sagen auf einen Blick, worauf man
+sich einlässt: **lokal** oder **online**, **ohne Konto**, **Zugangsdaten nötig** oder **App-Registrierung
+(Admin)**, **ab Hinzufügen** (das Plugin schreibt mit, rückwirkend gibt es nichts) und **sensibel** (heikle
+Daten, mit Hinweis). Ein Klick öffnet die Detailansicht: was das Plugin erfasst, was genau gespeichert wird, der
+Datenschutz-Hinweis, die Einrichtung Schritt für Schritt – und nach dem Hinzufügen die Felder für Zugangsdaten und
+Einstellungen mit „Speichern & testen“, „Testen“ und „Entfernen“.
 
 **Entfernen** räumt vollständig auf: Die gespeicherten Zugangsdaten und alle Ereignisse dieses Plugins werden
-gelöscht. Fügen Sie es später wieder hinzu, holt die nächste Synchronisierung die Ereignisse des Sync-Fensters
-aus der Quelle zurück. Bildschirmaufnahme, Texterkennung, Datenbank und Zeitstrahl sind keine Plugins.
+gelöscht. Fügen Sie es später wieder hinzu, holt die nächste Synchronisierung zurück, was die Quelle noch hat.
+Bildschirmaufnahme, Texterkennung, Datenbank und Zeitstrahl sind keine Plugins.
 
-Wer von einer älteren Version kommt, verliert nichts: Die früheren Schalter `outlook_enabled`, `teams_enabled`
-und `dawarich_enabled` werden beim ersten Start in `installed_plugins` übernommen.
+| Plugin | Kategorie | Quelle | Konto | Zeile im Zeitstrahl |
+|---|---|---|---|---|
+| Outlook-Kalender | Kalender & Mail | klassisches Outlook (COM) | – | Termine |
+| Kalender per ICS-Link | Kalender & Mail | iCal-Link (Google, iCloud, neues Outlook, Nextcloud …) | geheimer Link | Termine |
+| Outlook-Mails | Kalender & Mail | klassisches Outlook (COM) | – | Mails |
+| Microsoft Teams | Gespräche & Meetings | Microsoft Graph | Entra-App (Admin) | Gespräche |
+| Teams-Gespräche (lokal) | Gespräche & Meetings | Mikrofon-Protokoll von Windows | – | Gespräche |
+| Gespräche in allen Apps | Gespräche & Meetings | Mikrofon- und Kamera-Protokoll von Windows | – | Gespräche |
+| Windows-Benachrichtigungen | Mitteilungen | Benachrichtigungs-Datenbank von Windows | – | Mitteilungen |
+| Browser-Verlauf | Web | Verlauf von Edge, Chrome, Brave, Vivaldi, Opera, Firefox | – | Web |
+| Git-Commits | Entwicklung | lokale Repositories (`git log`) | – | Entwicklung |
+| GitHub | Entwicklung | GitHub-Ereignisse | optional Token | Entwicklung |
+| PC-Zeiten | PC & Netzwerk | System-Ereignisprotokoll | – | PC |
+| WLAN-Netze | PC & Netzwerk | WLAN-Ereignisprotokoll | – | Orte |
+| Standort-Historie (Dawarich) | Orte | eigene Dawarich-Instanz | Token | Orte (nur im selbst gebauten Programm) |
+
+Alle Ereignisse landen verschlüsselt in derselben Datenbank, werden nach `retention_days` mitgelöscht und stehen
+über den MCP-Server bereit (`get_calendar` sowie das Feld `calendar` in `get_activity_at`/`list_active_apps`,
+Zusatzangaben je Ereignis unter `details`). Plugins mit eigener Historie werden alle `events_sync_minutes` für
+ein Fenster von ±`events_window_days` um heute abgeglichen; beim Blättern in einen weiter zurückliegenden Tag
+wird dieser bei Bedarf nachgeladen. Plugins, die nur den Moment sehen (Gespräche, Mitteilungen), schreiben
+laufend mit.
+
+Zugangsdaten (Tokens, geheime Links) liegen DPAPI-geschützt im Datenordner unter `plugins\<id>.bin`, nie in der
+`config.yaml`; die Einstellungen der Plugins stehen dort unter `plugin_settings`. Online-Plugins sprechen nur
+`https` und prüfen Zertifikate immer; Zugangsdaten stehen nur im `Authorization`-Header, nie in Adressen,
+Protokollen oder Fehlermeldungen, und eine Weiterleitung auf einen anderen Server bekommt sie nicht mit.
 
 Plugins lassen sich bewusst **nicht** aus fremden Dateien nachladen: Ein Plugin läuft im selben Prozess, der den
 Datenbankschlüssel hält, und könnte alles lesen. Ein neues Plugin wird in `zeitspur/plugins.py` eingetragen;
-die Einstellungsseite baut sich aus seiner Selbstbeschreibung, ohne dass die Oberfläche angepasst werden muss.
-
-Termine und Anrufe erscheinen als eigene Marker-Spur „Termine“ oben im Zeitstrahl und stehen über den
-MCP-Server (`get_calendar` sowie das Feld `calendar` in `get_activity_at`/`list_active_apps`) bereit. Beide
-Quellen werden verschlüsselt in derselben Datenbank gespeichert und nach `retention_days` mitgelöscht. Die
-Synchronisierung läuft alle `events_sync_minutes` für ein Fenster von ±`events_window_days` um heute; beim
-Blättern in einen weiter zurückliegenden Tag wird dieser bei Bedarf zusätzlich nachgeladen.
+Plugin-Browser und Ersteinrichtung bauen sich aus seiner Selbstbeschreibung, ohne dass die Oberfläche angepasst
+werden muss.
 
 ### Outlook-Kalender
 
@@ -313,7 +395,8 @@ Installation, steht COM nicht zur Verfügung und die Kalenderspur bleibt leer.
 
 Zu jedem Termin werden Betreff, Zeitraum, Ort, Organisator und Teilnehmer gespeichert; Besprechungen und
 einfache Termine werden unterschieden. Ist kein klassisches Outlook installiert, lässt sich das Plugin nicht
-hinzufügen; die Einstellungsseite nennt dann den Grund.
+hinzufügen; der Plugin-Browser nennt dann den Grund. Für das neue Outlook gibt es das Plugin
+[Kalender per ICS-Link](#kalender-per-ics-link).
 
 ### Teams-Anrufe (Microsoft Graph)
 
@@ -326,7 +409,7 @@ Das erfordert eine einmalige Einrichtung durch einen Administrator Ihres Microso
 3. Unter „Zertifikate & Geheimnisse“ ein Client-Secret erzeugen.
 4. Tenant-Id (Verzeichnis-Id), Client-Id (Anwendungs-Id) und das Client-Secret notieren.
 
-In Zeitspur dann: Einstellungen (⚙) → Plugins → Microsoft Teams → „Hinzufügen“, die drei Werte und Ihre
+In Zeitspur dann: Plugins (oben rechts) → Microsoft Teams → „Hinzufügen“, die drei Werte und Ihre
 Objekt-Id eintragen und „Speichern & testen“ wählen. Das Client-Secret
 wird per DPAPI geschützt in `%LOCALAPPDATA%\Zeitspur\teams_credentials.bin` abgelegt, nicht im Klartext.
 Der Client-Credentials-Flow (App-only) benötigt keine Benutzeranmeldung.
@@ -381,6 +464,101 @@ oder eine Besprechung.
 Beide Teams-Plugins lassen sich gleichzeitig verwenden; ein Gespräch erscheint dann zweimal – einmal mit
 Gesprächspartnern aus Microsoft Graph, einmal mit den Zeiten vom Mikrofon.
 
+### Gespräche in allen Apps
+
+Plugin `calls_local` – dieselbe Quelle wie bei `teams_local`, aber für **jede** App: Zoom, Slack-Huddles, Webex,
+Skype, Discord, WhatsApp, Signal, Telefon-Apps wie STARFACE, 3CX oder MicroSIP und Meetings im Browser (Google
+Meet, Teams im Web …). Läuft während des Gesprächs auch die Kamera derselben App, heißt der Eintrag
+„Gespräch: Zoom mit Video“.
+
+* **Keine Einrichtung, kein Konto, kein Netz.** Erfasst ab dem Hinzufügen; Nutzungen unter 5 Sekunden zählen nicht.
+* **Keine Inhalte:** Gespeichert werden App, Beginn, Ende und ob die Kamera lief – keine Tonaufnahme, keine
+  Gesprächspartner. Nur bei Meetings im Browser wird der Titel des Meeting-Tabs übernommen, und nur, wenn er
+  eindeutig nach einem Meeting aussieht („Meet – abc-defg-hij“); alle anderen Tabs bleiben außen vor, und bei
+  pausierter Aufnahme werden gar keine Fenstertitel gelesen.
+* Fernwartung (TeamViewer, AnyDesk), Aufnahme-Apps (z. B. Plaud) und der Sprachmodus von KI-Apps erscheinen als
+  „Fernwartung“, „Aufnahme“ bzw. „Spracheingabe“ – abschaltbar mit „Auch Fernwartung, Aufnahmen und Spracheingabe
+  erfassen“. Einzelne Apps lassen sich unter „Auslassen“ ausschließen; Windows-eigene Nutzungen (Einstellungen,
+  Windows Hello, Kamera-App) zählen nie.
+* Ist `teams_local` installiert, überlässt dieses Plugin ihm die Teams-Gespräche – dort gibt es zusätzlich den
+  Gesprächspartner aus dem Fenstertitel.
+
+### Windows-Benachrichtigungen
+
+Plugin `notifications`. Schreibt die Mitteilungen mit, die Windows anzeigt – von Teams, Outlook, Slack, WhatsApp,
+Signal und jeder anderen App. Gelesen wird nur lesend aus der Benachrichtigungs-Datenbank von Windows
+(`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`). Windows behält Mitteilungen dort nur kurz;
+Zeitspur sieht alle 30 Sekunden nach und speichert neue – rückwirkend gibt es nichts.
+
+**Heikel, deshalb mit Hinweis im Plugin-Browser:** Mitteilungen enthalten oft Nachrichten anderer Menschen.
+Gespeichert werden App, Titel (meist der Absender) und – abschaltbar – die Textvorschau. Windows-Systemmeldungen
+bleiben standardmäßig außen vor, einzelne Apps lassen sich ausschließen oder ausschließlich zulassen. Solange die
+Aufnahme pausiert, wird nichts gelesen.
+
+### Browser-Verlauf
+
+Plugin `browser_history`. Liest den Verlauf aller gefundenen Profile von Edge, Chrome, Brave, Vivaldi, Opera und
+Firefox – nur lesend, während der Browser läuft, ohne Kopie auf der Platte (Chromium-Browser halten ihren Verlauf
+fast dauerhaft gesperrt; Zeitspur liest ihn deshalb als Momentaufnahme, ohne den Browser zu stören).
+InPrivate/Inkognito landet gar nicht erst im Verlauf.
+
+Statt jedes einzelnen Aufrufs erscheinen **Surf-Phasen**: zusammenhängende Besuche ohne Pause über 5 Minuten,
+höchstens eine Stunde je Block, mit den meistbesuchten Websites als Betreff („github.com, docs.python.org +2“).
+Die Seitentitel stehen Claude in `details` zur Verfügung (abschaltbar mit „Seitentitel speichern“). Bewusst nicht
+gezählt werden Adresswechsel, die eine Web-App per Skript auslöst – manche Anwendungen erzeugen so zehntausende
+Verlaufseinträge am Tag –, Zwischenstationen von Weiterleitungen, Inhalte in Rahmen und das Neuladen derselben
+Seite innerhalb einer Minute.
+
+Nie gespeichert werden Seiten, deren Titel auf die Ausschlussliste der Aufnahme passt (etwa „.*Banking.*“), und
+Domains unter „Domains auslassen“ – samt Unterdomains (`bank.de` schließt `online.bank.de` mit aus).
+
+### Kalender per ICS-Link
+
+Plugin `ics`. Liest beliebig viele Kalender über ihre iCal-Adresse – damit lassen sich auch Kalender nutzen, an die
+das Outlook-Plugin nicht herankommt: das **neue Outlook** und Outlook.com („Kalender veröffentlichen“), **Google
+Kalender** („Privatadresse im iCal-Format“), **iCloud** („Öffentlicher Kalender“), Nextcloud und alle anderen
+Dienste mit ICS-Export. Je Zeile ein Link, optional mit Namen davor: `Arbeit | https://…` (`webcal://` geht auch).
+
+* Serientermine samt Ausnahmen werden aufgelöst, Zeitzonen korrekt umgerechnet (auch Googles `X-WR-TIMEZONE`),
+  abgesagte Termine ausgelassen, ganztägige gekennzeichnet.
+* **Der Link ist der Schlüssel** – wer ihn kennt, kann den Kalender lesen. Er wird deshalb wie ein Passwort
+  behandelt: DPAPI-geschützt gespeichert, nur über `https` abgerufen und nie in Protokollen oder Fehlermeldungen
+  genannt; dort steht höchstens der Name des Kalenders.
+* Scheitert ein Kalender, scheitert der Abgleich als Ganzes – sonst würden seine schon gespeicherten Termine als
+  „gelöscht“ entfernt.
+
+### Outlook-Mails
+
+Plugin `outlook_mail`. Zeigt, wann Sie welche Mails geschrieben und bekommen haben – aus „Gesendete Elemente“ und
+dem Posteingang des klassischen Outlook, über dieselbe COM-Schnittstelle wie der Kalender, ohne Anmeldung.
+Gespeichert werden Betreff, Absender bzw. Empfänger und Uhrzeit, **nie** Mailtexte oder Anhänge. Gesendete und
+empfangene Mails lassen sich einzeln abwählen. Besprechungsanfragen und Berichte zählen nicht als Mail.
+
+### Git-Commits und GitHub
+
+Plugin `git` zeigt Ihre eigenen Commits aus den Repositories in den gewählten Ordnern (Unterordner werden bis zu
+drei Ebenen tief durchsucht, `node_modules`, virtuelle Umgebungen und versteckte Ordner ausgelassen). Eigene Commits
+erkennt es an Name oder E-Mail-Adresse – aus den Einstellungen oder aus der Git-Konfiguration des jeweiligen
+Repositories. Ohne Netz und ohne Konto; Git für Windows muss installiert sein.
+
+Plugin `github` zeigt Ihre GitHub-Aktivität: Pushes, Pull Requests, Reviews, Issues, Kommentare, Releases. Der
+Benutzername genügt für öffentliche Aktivität; mit einem persönlichen Zugriffstoken (optional, DPAPI-geschützt)
+auch die in privaten Repositories. GitHub liefert höchstens die letzten 90 Tage bzw. 300 Ereignisse.
+
+### PC-Zeiten und WLAN-Netze
+
+Plugin `pc_times` liest aus dem System-Ereignisprotokoll, wann der PC an war – eingeschaltet, aus dem Standby
+geholt, schlafen gelegt, heruntergefahren –, auch rückwirkend und für Zeiten, in denen Zeitspur nicht lief. Es
+kennt den klassischen Ruhezustand ebenso wie den **modernen Standby** von Notebooks (Bildschirm aus); kurzes
+Aufwachen im Standby unter zwei Minuten zählt nicht. Ein Neustart ohne vorheriges Herunterfahren (Absturz, Strom
+weg) beendet die Zeit davor beim letzten bekannten Ereignis. Sperren und Entsperren stehen nur im
+Sicherheitsprotokoll, das ohne Adminrechte nicht lesbar ist – sie fehlen deshalb.
+
+Plugin `wifi` liest aus dem WLAN-Protokoll, mit welchem Funknetz der PC wann verbunden war. Kurze Unterbrechungen
+im selben Netz (Standby, Funkloch) werden zu einer Verbindung zusammengefasst. Mit Zuordnungen wie
+`Firma-WLAN = Büro` wird daraus ein **Ortshinweis ohne GPS**: Der Eintrag heißt dann „Büro (WLAN Firma-WLAN)“,
+und Claude darf sagen „du warst im Büro“. Kabelverbindungen erscheinen nicht.
+
 ### Standort-Historie (Dawarich)
 
 Plugin `dawarich`. Zeitspur liest aus einer **eigenen** Dawarich-Instanz zwei schreibgeschützte
@@ -388,7 +566,7 @@ Endpunkte: `/api/v1/visits` (erkannte Aufenthalte) und `/api/v1/tracks` (Fahrten
 erscheint als Marker auf dem Zeitstrahl und über den MCP-Server — damit lässt sich Bildschirmaktivität
 einem Ort zuordnen („Was habe ich gemacht, als ich in Hamburg war?“).
 
-Einrichtung: Einstellungen (⚙) → Plugins → Standort-Historie (Dawarich) → „Hinzufügen“, Basis-Adresse und
+Einrichtung: Plugins (oben rechts) → Standort-Historie (Dawarich) → „Hinzufügen“, Basis-Adresse und
 Token eintragen und „Speichern & testen“ wählen.
 
 **Sicherheit**
@@ -576,9 +754,12 @@ eingetragen, passiert Folgendes:
   und meldet sich mit dem Startfenster zurück – mit Hauptfenster, wenn es vorher offen war, sonst im Infobereich.
   Eine Meldung bestätigt die neue Version. Daten und Einstellungen bleiben unverändert.
 * **Automatische Updates aus** (Einstellungen → Updates): Im Zeitstrahl erscheint ein Hinweis „Zeitspur X ist
-  verfügbar“ mit „Was ist neu?“ und **Jetzt aktualisieren**; zusätzlich einmal eine Meldung im Infobereich.
+  verfügbar“ mit **Jetzt aktualisieren**; zusätzlich einmal eine Meldung im Infobereich.
 * Jederzeit von Hand: Tray-Menü → **Nach Updates suchen** oder oben in den Einstellungen, wo auch die installierte
   Version und das Ergebnis der letzten Prüfung stehen.
+
+Solange ein Update ansteht, nennt der Hinweis oben im Zeitstrahl die wichtigsten Neuerungen der neuen Version
+und verlinkt **Alle Änderungen auf GitHub** (siehe [Screenshots](#screenshots)).
 
 **Sicherheit:** Jedes Update ist mit dem Release-Schlüssel des Herausgebers signiert (Ed25519). Zeitspur trägt
 nur den öffentlichen Teil in sich und installiert ausschließlich Setups, deren Signatur, Größe und SHA-256 stimmen –
@@ -663,7 +844,8 @@ selbst aktualisieren (siehe [Updates](#updates)). Ablauf:
    einmal von Hand auf eine Version mit neuem Schlüssel aktualisiert werden.
 2. Version in `zeitspur/__init__.py` erhöhen (einzige Stelle; `build.ps1` reicht sie an den Installer
    weiter) und die Änderungen in `CHANGELOG.md` unter `## <Version>` eintragen – daraus entstehen die
-   Release-Notizen und der Text „Was ist neu?“ in der App.
+   Release-Notizen und die Liste „Neu in Zeitspur …“ im Update-Hinweis der App (dort höchstens sechs Punkte,
+   die wichtigsten gehören deshalb nach oben).
 3. Committen und pushen, dann `pwsh -File tools\publish_release.ps1`: baut die Release-Ausgabe (mit Tests),
    signiert `latest.json`, prüft Signatur und Setup wie ein Client und legt den GitHub-Release
    `v<Version>` mit beiden Dateien an. `-DryRun` baut und signiert nur.
@@ -686,7 +868,9 @@ Nützliche Werkzeuge in `tools\`: `seed_demo_db.py` (Demo-Datenbank mit syntheti
 Dienst, macht Fenster-Screenshots, beendet ihn und prüft das Log), `mcp_smoke.py` (spricht den MCP-Server über
 stdio an wie ein Claude-Client), `trim_tesseract.py` (entfernt nicht benötigte DLLs aus dem Tesseract-Bundle),
 `sandbox_test.ps1` (spielt die Installation in der Windows Sandbox durch – frisches Windows, so wie ein Kollege
-sie erlebt; `-Dev` für den eigenen Build, `-NoStart` nur vorbereiten).
+sie erlebt; `-Dev` für den eigenen Build, `-NoStart` nur vorbereiten), `demo_ui.py` (die echte Oberfläche mit
+erfundenen Demo-Daten als Seite für den Browser) und `screenshots.py` (rendert daraus mit Edge im
+Headless-Modus die Bilder in `docs\images\` für dieses README – nach Änderungen an der Oberfläche neu ausführen).
 
 Projektstruktur:
 
@@ -707,6 +891,7 @@ zeitspur/
   mcp_server.py    MCP-Server (Zeitspur.exe --mcp, optional ZeitspurMCP.exe)
 tests/             pytest-Suite (Krypto, Storage, Frame-Diff, OCR, Cleanup, Bridge, MCP)
 installer/         installer.iss (Inno Setup), tesseract-portable/ (generiert)
+docs/images/       Logo, Titelbild und Screenshots fuer dieses README (Screenshots: tools\screenshots.py)
 zeitspur.spec   PyInstaller: zwei EXEs, gemeinsamer _internal-Ordner
 ```
 
@@ -731,9 +916,13 @@ Python (PSF), Tesseract OCR und die Sprachdaten `tessdata_fast` (Apache 2.0), SQ
 eigene Dateien unter `_internal\pystray` und lässt sich dort ersetzen – sowie im eigenen Build Leaflet (BSD-2,
 `zeitspur/timeline_ui/vendor/LICENSE-leaflet.txt`).
 
-## Projektmodule (Phase 2)
+## Projektmodule: Plugins
 
-Neu hinzugekommen sind `zeitspur/outlook.py` (COM-Zugriff auf den Outlook-Kalender), `zeitspur/teams.py`
-(Microsoft-Graph-`callRecords` und DPAPI-geschützte Zugangsdaten) und `zeitspur/events_sync.py` (periodische
-und bedarfsgesteuerte Synchronisierung in die Tabelle `calendar_events`). Datenbankschema v2 ergänzt diese
-Tabelle; bestehende v1-Datenbanken werden beim ersten Start automatisch migriert.
+`zeitspur/plugins.py` beschreibt alle Plugins (Registry, Kategorien, Zeilen im Zeitstrahl, Felder) und ist die
+einzige Stelle, an der ein neues eingetragen wird. `zeitspur/events_sync.py` gleicht Plugins mit Historie
+periodisch und bei Bedarf ab und gibt beobachtenden Plugins alle paar Sekunden Gelegenheit mitzuschreiben; alles
+landet in der Tabelle `calendar_events`. Gemeinsame Bausteine: `credentials.py` (DPAPI-geschützte Zugangsdaten je
+Plugin), `httpclient.py` (https-Zugang mit Zertifikatsprüfung, sicheren Weiterleitungen und Fehlermeldungen ohne
+Geheimnisse) und `eventlog.py` (Windows-Ereignisprotokolle). Die Quellen selbst: `outlook.py`, `outlook_mail.py`,
+`ics_calendar.py`, `teams.py`, `teams_local.py`, `calls_local.py`, `notifications.py`, `browser_history.py`,
+`git_commits.py`, `github_activity.py`, `pc_times.py`, `wifi.py` und `dawarich.py`.

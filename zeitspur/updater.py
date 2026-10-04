@@ -80,6 +80,13 @@ def parse_version(text: Any) -> tuple[int, ...]:
     return tuple(int(teil) for teil in text.split("."))
 
 
+def release_page(version: Any) -> str | None:
+    """Seite der Version auf GitHub (Release-Notizen) - nur aus Repository und gepruefter Versionsnummer gebaut."""
+    if not isinstance(version, str) or not _VERSION_RE.fullmatch(version):
+        return None
+    return f"https://github.com/{REPO}/releases/tag/v{version}"
+
+
 def is_newer(candidate: str, current: str) -> bool:
     a, b = parse_version(candidate), parse_version(current)
     n = max(len(a), len(b))
@@ -386,6 +393,7 @@ class Updater:
             data = asdict(self._state)
         data["auto"] = bool(self.cfg.auto_update)
         data["idle_s"] = self.idle_needed_s()
+        data["release_url"] = release_page(data["version"])
         return data
 
     # ---- Ablauf ----------------------------------------------------------------------------------

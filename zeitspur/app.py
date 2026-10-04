@@ -348,6 +348,18 @@ class App:
         self.updater.check_now(manual=notify)
         return True
 
+    def open_release_page(self) -> bool:
+        """Release-Notizen des angebotenen Updates im Standardbrowser - die Adresse baut der Update-Dienst selbst."""
+        url = (self.update_status() or {}).get("release_url")
+        if not url:
+            return False
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+        except OSError:
+            log.warning("Browser fuer die Release-Seite liess sich nicht oeffnen")
+            return False
+        return True
+
     def update_now(self) -> bool:
         """Verfuegbares Update sofort laden und installieren (Knopf im Zeitstrahl)."""
         if self.updater is None:
@@ -499,6 +511,23 @@ class App:
         message = plugin.test_connection(self.cfg)
         self._ensure_event_sync()
         return message
+
+    def save_plugin_settings(self, plugin_id: str, values: dict) -> dict:
+        """Prueft und speichert die Einstellungen eines Plugins; liefert seine frische Beschreibung."""
+        plugin = plugins.get(plugin_id)
+        clean = plugin.clean_settings(values)
+        if plugin.legacy_settings:   # eigene Schluessel in config.yaml (Teams)
+            from .timeline_ui.bridge import coerce_config
+            cfg = coerce_config(clean, self.cfg)
+        else:
+            cfg = Config(**self.cfg.to_dict())
+            cfg.plugin_settings = {**cfg.plugin_settings, plugin.id: clean}
+            cfg.validate()
+        save_config(cfg)
+        self._apply_in_place(cfg)
+        log.info("Einstellungen gespeichert: %s", plugin.name)
+        self._ensure_event_sync()   # sofort mit den neuen Einstellungen abgleichen
+        return plugin.describe(self.cfg)
 
     def reveal_plugin_credentials(self, plugin_id: str) -> dict[str, str]:
         return plugins.get(plugin_id).reveal_credentials()

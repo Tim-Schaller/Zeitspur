@@ -492,3 +492,18 @@ def test_release_ausgabe_ohne_standort(tmp_path, key, monkeypatch):
     assert not any(w in text for w in ("Standort", "Aufenthalt", "Koordinaten", "Buero"))
     assert "get_calendar" in text      # der Rest der Anweisungen ist vollstaendig da
 
+
+
+def test_ereignisse_der_neuen_plugins_mit_details():
+    from zeitspur.mcp_server import _fmt_event
+
+    e = {"source": "notifications", "category": "notification", "subject": "Teams: Erika Musterfrau",
+         "ts_start": 1_790_000_000_000, "ts_end": 1_790_000_000_000,
+         "extra": json.dumps({"app": "Teams", "text": "Kurze Frage", "intern": "nicht weitergeben"})}
+    out = _fmt_event(e)
+    assert out["category"] == "Mitteilung" and out["source_label"] == "Windows-Benachrichtigungen"
+    assert out["details"] == {"app": "Teams", "text": "Kurze Frage"}       # nur freigegebene Angaben
+    web = _fmt_event({**e, "source": "browser_history", "category": "web",
+                      "extra": json.dumps({"domains": {"github.com": 3}, "pages": [["10:15", "github.com", "x"]]})})
+    assert web["category"] == "Surfen" and web["details"]["domains"] == {"github.com": 3}
+    assert "details" not in _fmt_event({**e, "extra": "{}"})

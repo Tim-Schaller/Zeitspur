@@ -54,6 +54,8 @@ class Config:
     # Ereignis-Plugins (Outlook, Teams, Dawarich): mitgeliefert, aber inaktiv, bis sie hier stehen.
     # Verwaltet ueber die Einstellungen -> Plugins; siehe zeitspur/plugins.py.
     installed_plugins: list[str] = field(default_factory=list)
+    # Einstellungen der Plugins je Plugin-Id (Felder beschreibt das Plugin selbst). Zugangsdaten nie hier.
+    plugin_settings: dict[str, dict] = field(default_factory=dict)
     teams_user_id: str = ""              # Teams-Plugin: Azure-AD-Objekt-Id -> nur EIGENE Anrufe (statt aller im Tenant)
     teams_user_names: list[str] = field(default_factory=list)  # Teams-Plugin: Anzeigenamen als Rueckfall
     map_enabled: bool = False             # Karte im Zeitstrahl; laedt Kacheln aus dem Netz (siehe README)
@@ -118,6 +120,7 @@ class Config:
         _check_range(self, "update_idle_minutes", 1, 240)
         if not isinstance(self.installed_plugins, list) or not all(isinstance(v, str) for v in self.installed_plugins):
             raise ConfigError("installed_plugins muss eine Liste von Plugin-Namen sein")
+        _check_plugin_settings(self.plugin_settings)
         if not isinstance(self.teams_user_id, str):
             raise ConfigError("teams_user_id muss eine Zeichenkette (Azure-AD-Objekt-Id) sein")
         if not isinstance(self.teams_user_names, list) or not all(isinstance(v, str) for v in self.teams_user_names):
@@ -162,6 +165,20 @@ class Config:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _check_plugin_settings(value) -> None:
+    """plugin_settings: {plugin-id: {schluessel: einfacher Wert oder Liste von Zeichenketten}}."""
+    if not isinstance(value, dict):
+        raise ConfigError("plugin_settings muss ein Mapping je Plugin sein")
+    for pid, settings in value.items():
+        if not isinstance(pid, str) or not isinstance(settings, dict):
+            raise ConfigError(f"plugin_settings.{pid}: erwartet ein Mapping von Einstellungen")
+        for key, v in settings.items():
+            ok = (v is None or isinstance(v, (str, int, float, bool))
+                  or (isinstance(v, list) and all(isinstance(x, str) for x in v)))
+            if not isinstance(key, str) or not ok:
+                raise ConfigError(f"plugin_settings.{pid}.{key}: ungueltiger Wert")
 
 
 def _check_range(cfg: Config, name: str, lo, hi) -> None:

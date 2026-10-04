@@ -7,7 +7,7 @@ import hashlib
 import importlib.util
 from pathlib import Path
 
-from zeitspur import crypto, dawarich, teams, updater
+from zeitspur import credentials, crypto, dawarich, teams, updater
 
 
 def _release_key_tool():
@@ -28,11 +28,13 @@ def test_dpapi_entropy_never_changes():
         "teams": _fingerprint(teams.TEAMS_ENTROPY),
         "dawarich": _fingerprint(dawarich.DAWARICH_ENTROPY),
         "release_key": _fingerprint(_release_key_tool().ENTROPY),
+        "plugins": _fingerprint(credentials.ENTROPY),
     } == {
         "db_key": "c3360f836d660cc5",
         "teams": "aa03b326c9a5d945",
         "dawarich": "34092fa70fbdcf89",
         "release_key": "6178f5ed6bd3830b",
+        "plugins": "8f96a19f0087785f",
     }
 
 

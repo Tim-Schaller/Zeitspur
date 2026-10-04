@@ -1,7 +1,20 @@
 # Änderungen
 
-Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zum Text
-„Was ist neu?“ in der App (tools/publish_release.ps1).
+Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zur Liste
+„Neu in Zeitspur …“ im Update-Hinweis der App (tools/publish_release.ps1; dort höchstens sechs Punkte).
+
+## 0.4.0
+
+- Plugin-Browser (Knopf „Plugins“ oben rechts): alle Plugins mit Suche und Kategorien, und je Plugin, was es
+  erfasst, was gespeichert wird und wie man es einrichtet.
+- Plugins lassen sich schon in der Ersteinrichtung auswählen – nichts ist vorausgewählt.
+- Neue Plugins ohne Konto: Gespräche in allen Apps (Zoom, Slack, Webex, STARFACE, WhatsApp, Meetings im
+  Browser …), Windows-Benachrichtigungen, Browser-Verlauf, Outlook-Mails, Git-Commits, PC-Zeiten und WLAN-Netze
+  als Ortshinweis.
+- Neue Online-Plugins: Kalender per ICS-Link (Google, iCloud, neues Outlook, Nextcloud …) und GitHub.
+- Zeitstrahl mit eigenen Zeilen für Gespräche, Mails, Mitteilungen, Web, Entwicklung und PC; Claude bekommt zu
+  jedem Ereignis die Details.
+- Der Update-Hinweis nennt die wichtigsten Neuerungen und verlinkt alle Änderungen auf GitHub.
 
 ## 0.3.2
 

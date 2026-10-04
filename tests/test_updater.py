@@ -342,3 +342,31 @@ def test_read_pending_ignores_missing_or_broken_files(tmp_path):
     (tmp_path / "updates").mkdir()
     (tmp_path / "updates" / "pending.json").write_text("kaputt", encoding="utf-8")
     assert updater.read_pending(tmp_path) is None
+
+
+def test_release_seite_nur_aus_gepruefter_version():
+    assert updater.release_page("0.4.0") == "https://github.com/Tim-Schaller/Zeitspur/releases/tag/v0.4.0"
+    for bad in ("0.4.0/../../boese", "", None, "v0.4"):
+        assert updater.release_page(bad) is None
+
+
+def test_release_seite_oeffnet_nur_die_eigene_adresse(monkeypatch):
+    import os
+
+    from zeitspur.app import App
+    opened = []
+    monkeypatch.setattr(os, "startfile", opened.append, raising=False)
+
+    class Host:
+        open_release_page = App.open_release_page
+
+        def __init__(self, status):
+            self.status = status
+
+        def update_status(self):
+            return self.status
+
+    url = updater.release_page("0.4.0")
+    assert Host({"release_url": url}).open_release_page() is True and opened == [url]
+    assert Host(None).open_release_page() is False and Host({"release_url": None}).open_release_page() is False
+    assert opened == [url]

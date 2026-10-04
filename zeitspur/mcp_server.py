@@ -29,7 +29,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import APP_NAME, __version__, edition, timeutil
+from . import APP_NAME, __version__, edition, plugins, timeutil
 from .config import Config, ConfigError, key_path, load_config, logs_dir
 from .crypto import KeyProtectionError, WrongKeyError, unprotect_key
 from .storage import OCR_DONE, OCR_FAILED, OCR_PENDING, ReadOnlyStorage
@@ -44,12 +44,18 @@ _INSTRUCTIONS_BASE = (
     "oder Wochentage aufzulösen. get_activity_at beantwortet 'Was habe ich am Mittwoch um 12 Uhr gemacht?', "
     "search_activity findet Stichworte im Bildschirmtext, list_active_apps liefert die Tagesübersicht, "
     "get_entry den vollständigen Text eines Eintrags und get_screenshot das zugehörige Bild. "
-    "get_calendar liefert die Ereignisse der installierten Plugins eines Tages (z. B. Outlook-Termine und "
-    "Teams-Anrufe); get_activity_at und list_active_apps enthalten diese unter 'calendar', sodass sich "
-    "Bildschirmaktivität einem Meeting oder Anruf zuordnen lässt. "
+    "get_calendar liefert die Ereignisse der installierten Plugins eines Tages - je nach Einrichtung Termine "
+    "(Outlook, ICS-Kalender), Anrufe und Gespräche (Teams, Zoom, Telefon-Apps, Meetings im Browser), gesendete "
+    "und empfangene Mails, Windows-Mitteilungen, Surf-Phasen im Browser, Git-Commits, GitHub-Aktivität, die "
+    "Zeiten, in denen der PC an war, und WLAN-Verbindungen. Weitere Angaben stehen je Ereignis unter 'details' "
+    "(z. B. die Seitentitel einer Surf-Phase, die Textvorschau einer Mitteilung, ob ein Gespräch mit Video lief). "
+    "get_activity_at und list_active_apps enthalten diese Ereignisse unter 'calendar', sodass sich "
+    "Bildschirmaktivität einem Meeting, Anruf oder einer Mail zuordnen lässt. "
     "Antworte auf 'Was habe ich um X gemacht?' als EINE zusammenhaengende Aussage: unter 'calendar' stehen "
-    "Termine und Anrufe, unter 'blocks'/'entries' die Bildschirmarbeit. Also etwa: 'Du hast in Visual Studio "
-    "an X gearbeitet; laut Outlook lief parallel der Termin Y.'"
+    "Termine, Gespräche und die anderen Ereignisse, unter 'blocks'/'entries' die Bildschirmarbeit. Also etwa: "
+    "'Du hast in Visual Studio an X gearbeitet; laut Outlook lief parallel der Termin Y.' Ein WLAN-Ereignis mit "
+    "details.place nennt den Ort, den der Nutzer diesem Netz zugeordnet hat (z. B. 'Firma') - den darfst du "
+    "nennen ('du warst in der Firma'); ohne place nur den Netznamen nennen und keinen Ort raten."
 )
 # Nur in Ausgaben mit Standort-Historie (siehe edition.py) - der Release-Build kennt keine Orte.
 _INSTRUCTIONS_LOCATIONS = (
@@ -69,9 +75,11 @@ def instructions() -> str:
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 OCR_LABELS = {OCR_PENDING: "ausstehend", OCR_DONE: "erkannt", OCR_FAILED: "fehlgeschlagen"}
-EVENT_CATEGORY_LABELS = {"meeting": "Besprechung", "appointment": "Termin", "call": "Anruf",
-                         "visit": "Aufenthalt", "track": "Fahrt"}
+EVENT_CATEGORY_LABELS = plugins.CATEGORY_LABELS
 MAX_ENTRIES = 60
+# Zusatzangaben der Plugins, die Claude zu einem Ereignis bekommt (unter 'details')
+DETAIL_KEYS = ("app", "text", "video", "window_titles", "in_progress", "domains", "pages", "visits", "repo", "hash",
+               "type", "url", "commits", "folder", "start_reason", "end_reason", "ssid", "place", "calendar", "all_day")
 
 
 DIRECTION_LABELS = {"outgoing": "ausgehend", "incoming": "eingehend"}
@@ -104,11 +112,17 @@ def _fmt_event(e: dict[str, Any], places=None) -> dict[str, Any]:
         "duration": timeutil.human_duration(e["ts_end"] - e["ts_start"]),
     }
     try:
-        direction = json.loads(e.get("extra") or "{}").get("direction")
+        extra = json.loads(e.get("extra") or "{}")
     except (ValueError, TypeError):
-        direction = None
+        extra = {}
+    extra = extra if isinstance(extra, dict) else {}
+    direction = extra.get("direction")
     if direction:
         out["direction"] = DIRECTION_LABELS.get(direction, direction)
+    if e.get("source") != "dawarich":   # Orte der Standort-Historie haben ihre eigene Aufbereitung (unten)
+        details = {k: extra[k] for k in DETAIL_KEYS if extra.get(k) not in (None, "", [], {})}
+        if details:
+            out["details"] = details
     for key in ("location", "organizer", "attendees"):
         if e.get(key):
             out[key] = e[key]

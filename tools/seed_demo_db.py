@@ -33,7 +33,7 @@ APPS = [
      ["Anna Müller: Können wir den Termin verschieben?", "Max: Ja, Donnerstag 14 Uhr passt", "Agenda: Backup, DNS, Freigaben"]),
     ("firefox.exe", ["Windows Recall – Wikipedia — Mozilla Firefox", "SQLCipher Documentation — Mozilla Firefox"],
      ["Recall is a feature that captures snapshots", "PRAGMA key and cipher_page_size", "Verschlüsselung mit AES-256"]),
-    ("Code.exe", ["storage.py - zeitspur - Visual Studio Code", "capture.py - zeitspur - Visual Studio Code"],
+    ("Code.exe", ["storage.py - Zeitspur - Visual Studio Code", "capture.py - Zeitspur - Visual Studio Code"],
      ["def insert_entry(self, ts_start, ts_end):", "class CaptureLoop(threading.Thread):", "TODO: Retention testen"]),
 ]
 

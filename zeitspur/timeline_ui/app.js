@@ -20,10 +20,15 @@
     pollTimer: null,
     dayTimer: null,
     searchTimer: null,
-    mode: "timeline",     // 'timeline' | 'setup' | 'settings'
+    mode: "timeline",     // 'timeline' | 'setup' | 'settings' | 'plugins'
     map: null,            // Leaflet-Karte, erst bei Bedarf erzeugt
     mapLayer: null,
     dragging: null,
+    plugins: [],          // letzte list_plugins()
+    pluginFilter: { q: "", cat: "", installed: false, local: false },
+    pluginSelected: null, // Id des Plugins in der Detailansicht
+    pluginMessage: null,  // {id, text}: Rueckmeldung, die einen Neuaufbau ueberlebt
+    firstRunPicks: null,  // in der Ersteinrichtung gewaehlte Plugins
   };
 
   // ------------------------------------------------------------------ Hilfen
@@ -62,10 +67,16 @@
     const [y, m, d] = iso.split("-").map(Number);
     return ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"][new Date(y, m - 1, d).getDay()];
   }
-  function showBanner(text, isError = false) {
+  function showBanner(text, isError = false, action = null) {
     const b = $("banner");
     if (!text) { b.hidden = true; return; }
-    b.textContent = text; b.className = "banner" + (isError ? " error" : ""); b.hidden = false;
+    b.replaceChildren(text);
+    if (action) {
+      const btn = el("button", { type: "button", class: "btn small banner-action", text: action.label });
+      btn.addEventListener("click", () => { b.hidden = true; action.run(); });
+      b.append(btn);
+    }
+    b.className = "banner" + (isError ? " error" : ""); b.hidden = false;
   }
   function errMessage(err) {
     if (!err) return "Unbekannter Fehler";
@@ -142,9 +153,28 @@
     $("updateText").textContent = text;
     $("updateBtn").hidden = !button;
     $("updateBtn").textContent = button;
-    $("updateNotesBtn").hidden = !u.notes;
-    $("updateNotes").textContent = u.notes || "";
-    if (!u.notes) $("updateNotes").hidden = true;
+    renderUpdateNews(u);
+  }
+  // Kurzer Changelog der angebotenen Version: die Punkte aus CHANGELOG.md, dazu der Link zur Release-Seite.
+  const MAX_NEWS = 6;
+  function changelogItems(notes) {
+    const items = [];
+    for (const raw of String(notes || "").split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (/^[-*•]\s+/.test(line) || !items.length) items.push(line.replace(/^[-*•]\s+/, ""));
+      else items[items.length - 1] += " " + line;      // eingerueckte Fortsetzung des vorigen Punkts
+    }
+    return items;
+  }
+  function renderUpdateNews(u) {
+    const items = changelogItems(u.notes);
+    $("updateNews").hidden = !items.length && !u.release_url;
+    $("updateNewsTitle").textContent = `Neu in Zeitspur ${u.version}`;
+    const shown = items.slice(0, MAX_NEWS).map((t) => el("li", { text: t }));
+    if (items.length > MAX_NEWS) shown.push(el("li", { class: "muted", text: `… und ${items.length - MAX_NEWS} weitere` }));
+    $("updateList").replaceChildren(...shown);
+    $("updateLink").hidden = !u.release_url;
   }
   function fmtIdle(seconds) {
     const s = Number(seconds) || 300;
@@ -377,8 +407,8 @@
     updateMapButton();
     if (!all.length) return;
     // Je Zeile, die ein Plugin angibt, eine eigene Spur: Aufenthalte dauern oft Stunden und wuerden
-    // Termine sonst verdecken. Bekannte Zeilen in fester Reihenfolge, weitere alphabetisch dahinter.
-    const order = ["Termine", "Orte"];
+    // Termine sonst verdecken. Bekannte Zeilen in fester Reihenfolge (plugins.LANES), weitere alphabetisch dahinter.
+    const order = (state.info && state.info.lane_order) || ["Termine", "Orte"];
     const rank = (n) => (order.indexOf(n) + 1) || 99;
     const names = [...new Set(all.map((e) => e.lane || "Termine"))]
       .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
@@ -790,6 +820,7 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
     state.mode = mode;
     stopPolling();
     $("timelineView").hidden = true;
+    $("pluginsView").hidden = true;
     $("setupView").hidden = false;
     $("daynav").style.visibility = "hidden";
     const firstRun = mode === "setup";
@@ -799,6 +830,7 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
       : "Änderungen werden gespeichert; die meisten wirken sofort, einige erst nach einem Neustart des Dienstes.";
     $("saveBtn").textContent = firstRun ? "Speichern und starten" : "Speichern";
     $("cancelBtn").hidden = firstRun;
+    $("pluginsBtn").hidden = firstRun;   // vor der Ersteinrichtung gibt es noch keine Datenbank
     $("formError").hidden = true;
     $("formNote").textContent = "";
     // Zustand auffrischen, BEVOR die Panels gebaut werden: sonst entscheidet ein veraltetes (womoeglich
@@ -808,156 +840,334 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
     let cfg = {};
     try { cfg = await state.api.get_config(); } catch (e) { showBanner("Konfiguration konnte nicht gelesen werden: " + errMessage(e), true); }
     buildForm(cfg);
-    if (!firstRun) await buildPluginsPanel(cfg);
+    if (firstRun) await buildFirstRunPlugins();
+    else buildPluginsSummary();
   }
   // ------------------------------------------------------------------ Plugins
-  // Die Oberflaeche kennt kein Plugin beim Namen: Name, Beschreibung, Zugangsdaten- und Einstellungsfelder
-  // kommen aus plugins.py. Ein dort ergaenztes Plugin erscheint hier ohne weitere Aenderung.
-  async function buildPluginsPanel(cfg) {
-    const holder = $("formFields");
-    holder.append(el("div", { class: "section-title", text: "Plugins" }));
-    holder.append(el("div", { class: "field" }, el("div", { class: "help", style: { gridColumn: "1 / -1" } },
-      "Termine, Anrufe und Orte kommen aus Plugins. Sie sind mitgeliefert, aber erst aktiv, wenn Sie sie " +
-      "hinzufügen. Zugangsdaten werden per DPAPI geschützt gespeichert, nicht in der config.yaml.")));
-    const box = el("div", { class: "plugins-box", id: "pluginsBox" });
-    holder.append(box);
-    await fillPlugins(box, cfg);
+  // Die Oberflaeche kennt kein Plugin beim Namen: Name, Kategorie, Beschreibung, Felder und Hinweise kommen aus
+  // plugins.py. Ein dort ergaenztes Plugin erscheint im Plugin-Browser und in der Ersteinrichtung ohne weitere
+  // Aenderung.
+  const ACCOUNT_BADGE = { none: ["ohne Konto", "ok"], token: ["Zugangsdaten nötig", ""], app: ["App-Registrierung (Admin)", "warn"] };
+  const REQUIRED_HINT = " *";
+
+  function pluginIcon(p, size) {
+    // Farbe des Plugins als zarter Hintergrund (#rrggbb + Deckkraft), das Symbol darauf
+    return el("span", { class: "plugin-icon" + (size ? " " + size : ""), style: { background: p.color + "2b" },
+      "aria-hidden": "true", text: p.icon || "•" });
   }
-  async function fillPlugins(box, cfg) {
-    let list = [];
-    try { list = await state.api.list_plugins(); }
-    catch (e) { box.replaceChildren(el("div", { class: "help", text: "Plugins konnten nicht geladen werden: " + errMessage(e) })); return; }
-    box.replaceChildren(...list.map((p) => pluginCard(p, cfg, () => fillPlugins(box, cfg))));
+  function pluginBadges(p) {
+    const [text, cls] = ACCOUNT_BADGE[p.account] || ACCOUNT_BADGE.none;
+    return [
+      el("span", { class: "badge", text: p.network === "online" ? "online" : "lokal" }),
+      el("span", { class: "badge " + cls, text }),
+      p.observes ? el("span", { class: "badge", title: "Erfasst ab dem Hinzufügen – rückwirkend gibt es nichts.", text: "ab Hinzufügen" }) : null,
+      p.privacy ? el("span", { class: "badge sensitive", title: p.privacy, text: "sensibel" }) : null,
+    ];
   }
-  function pluginBadge(p) {
-    if (!p.installed) return { text: "nicht hinzugefügt", cls: "" };
-    if (p.problem) return { text: "⚠ " + p.problem, cls: "warn" };
-    return { text: "● eingerichtet", cls: "ok" };
+  function pluginState(p) {
+    if (!p.available) return { text: "nicht verfügbar", cls: "off" };
+    if (!p.installed) return { text: "", cls: "" };
+    if (p.problem) return { text: "⚠ einrichten", cls: "warn" };
+    return { text: "✓ aktiv", cls: "ok" };
   }
-  function pluginCard(p, cfg, refresh) {
-    const card = el("div", { class: "plugin-card" + (p.installed ? " installed" : "") });
-    const status = el("span", { class: "muted" });
-    const badgeInfo = pluginBadge(p);
-    const badge = el("span", { class: "plugin-badge " + badgeInfo.cls, text: badgeInfo.text });
-    card.append(
-      el("div", { class: "plugin-head" },
-        el("span", { class: "plugin-dot", style: { background: p.color } }),
-        el("b", { text: p.name }), badge),
-      el("div", { class: "plugin-desc", text: p.description }));
+  function pluginNeedsInput(p) {
+    return p.credential_fields.some((f) => !f.optional) || p.setting_fields.some((f) => !f.optional);
+  }
+  function setPluginMessage(id, text) { state.pluginMessage = { id, text }; }
+
+  async function showPlugins(focusId) {
+    state.mode = "plugins";
+    stopPolling();
+    $("timelineView").hidden = true;
+    $("setupView").hidden = true;
+    $("pluginsView").hidden = false;
+    $("daynav").style.visibility = "hidden";
+    if (focusId) state.pluginSelected = focusId;
+    await reloadPlugins();
+  }
+  function leavePlugins() {
+    state.mode = "timeline";
+    $("pluginsView").hidden = true;
+    $("timelineView").hidden = false;
+    $("daynav").style.visibility = "visible";
+    if (!state.pollTimer) startPolling();
+    refresh();
+  }
+  async function reloadPlugins() {
+    try { state.plugins = await state.api.list_plugins(); }
+    catch (e) { showBanner("Plugins konnten nicht geladen werden: " + errMessage(e), true); }
+    renderPluginBrowser();
+  }
+  function pluginMatches(p) {
+    const f = state.pluginFilter;
+    if (f.cat && p.category !== f.cat) return false;
+    if (f.installed && !p.installed) return false;
+    if (f.local && (p.network !== "local" || p.account !== "none")) return false;
+    const q = f.q.trim().toLowerCase();
+    return !q || [p.name, p.summary, p.description, p.category].some((t) => (t || "").toLowerCase().includes(q));
+  }
+  function pluginCategories(list) {
+    const cats = ((state.info && state.info.plugin_categories) || []).filter((c) => list.some((p) => p.category === c));
+    for (const p of list) if (!cats.includes(p.category)) cats.push(p.category);
+    return cats;
+  }
+  function renderPluginBrowser() {
+    const list = state.plugins || [];
+    const f = state.pluginFilter;
+    const cats = pluginCategories(list);
+    const chip = (label, value, count) => el("button", {
+      type: "button", class: "chip" + (f.cat === value ? " on" : ""),
+      onclick: () => { f.cat = value; renderPluginBrowser(); },
+    }, label, el("span", { class: "chip-count", text: String(count) }));
+    $("pluginCats").replaceChildren(chip("Alle", "", list.length),
+      ...cats.map((c) => chip(c, c, list.filter((p) => p.category === c).length)));
+    const active = list.filter((p) => p.installed).length;
+    $("pluginSummary").textContent = active
+      ? `${active} von ${list.length} Plugins aktiv. Ein Klick auf eine Kachel zeigt, was das Plugin erfasst und wie es eingerichtet wird.`
+      : `${list.length} Plugins, noch keins hinzugefügt. Ein Klick auf eine Kachel zeigt, was das Plugin erfasst und wie es eingerichtet wird.`;
+    const shown = list.filter(pluginMatches);
+    const grid = $("pluginGrid");
+    grid.replaceChildren();
+    if (!shown.length) grid.append(el("div", { class: "muted plugin-empty", text: "Kein Plugin passt zu Suche und Filter." }));
+    for (const cat of cats) {
+      const items = shown.filter((p) => p.category === cat);
+      if (!items.length) continue;
+      grid.append(el("section", { class: "plugin-group" }, el("h3", { text: cat }),
+        el("div", { class: "plugin-grid" }, ...items.map(pluginTile))));
+    }
+    const selected = list.find((p) => p.id === state.pluginSelected);
+    $("pluginDetail").replaceChildren(...(selected ? pluginDetail(selected) : [pluginDetailEmpty()]));
+  }
+  function pluginTile(p) {
+    const st = pluginState(p);
+    return el("button", {
+      type: "button",
+      class: "plugin-tile" + (p.installed ? " installed" : "") + (p.available ? "" : " unavailable") +
+             (state.pluginSelected === p.id ? " selected" : ""),
+      onclick: () => { state.pluginSelected = p.id; state.pluginMessage = null; renderPluginBrowser(); },
+    },
+      pluginIcon(p),
+      el("span", { class: "t-name" }, el("span", { text: p.name }), st.text ? el("span", { class: "t-state " + st.cls, text: st.text }) : null),
+      el("span", { class: "t-sum", text: p.summary }),
+      el("span", { class: "badges" }, ...pluginBadges(p)));
+  }
+  function pluginDetailEmpty() {
+    return el("div", { class: "pd-empty" },
+      el("b", { text: "Plugin auswählen" }),
+      el("p", { class: "muted", text: "Links eine Kachel anklicken: Hier steht dann, was das Plugin erfasst, was mit den Daten passiert und wie es eingerichtet wird. Hinzufügen und Entfernen geht jederzeit." }));
+  }
+  function pluginDetail(p) {
+    const nodes = [];
+    nodes.push(el("div", { class: "pd-head" }, pluginIcon(p, "big"),
+      el("div", {}, el("h3", { text: p.name }), el("div", { class: "muted", text: p.category }))));
+    nodes.push(el("div", { class: "badges" }, ...pluginBadges(p)));
+    let statusText, statusCls = "";
+    if (!p.available) { statusText = p.unavailable_reason || "Auf diesem PC nicht verfügbar."; statusCls = "off"; }
+    else if (!p.installed) statusText = "Nicht hinzugefügt.";
+    else if (p.problem) { statusText = "Einrichtung nötig: " + p.problem; statusCls = "warn"; }
+    else { statusText = `Aktiv – erscheint im Zeitstrahl in der Zeile „${p.lane}“.`; statusCls = "ok"; }
+    nodes.push(el("div", { class: "pd-status " + statusCls, text: statusText }));
+    nodes.push(el("p", { class: "pd-desc", text: p.description }));
+    nodes.push(el("div", { class: "pd-section" }, el("h4", { text: "Das wird gespeichert" }), el("p", { text: p.records })));
+    if (p.privacy) nodes.push(el("div", { class: "pd-privacy" }, el("b", { text: "Datenschutz: " }), p.privacy));
+    if (p.setup_steps && p.setup_steps.length) {
+      nodes.push(el("div", { class: "pd-section" }, el("h4", { text: "Einrichtung" }),
+        el("ol", { class: "pd-steps" }, ...p.setup_steps.map((s) => el("li", { text: s })))));
+    }
+    const message = el("div", { class: "pd-message", role: "status" });
+    if (state.pluginMessage && state.pluginMessage.id === p.id) message.textContent = state.pluginMessage.text;
 
     if (!p.installed) {
-      const add = el("button", { type: "button", class: "btn small", text: "Hinzufügen" });
-      if (!p.available) { add.disabled = true; status.textContent = p.unavailable_reason || ""; }
+      const add = el("button", { type: "button", class: "btn primary", text: "Hinzufügen" });
+      add.disabled = !p.available;
       add.addEventListener("click", async () => {
         add.disabled = true;
-        status.textContent = "Füge hinzu …";
-        try { await state.api.add_plugin(p.id); await refresh(); }
-        catch (e) { status.textContent = errMessage(e); add.disabled = false; }
+        message.textContent = "Füge hinzu …";
+        try {
+          await state.api.add_plugin(p.id);
+          setPluginMessage(p.id, pluginNeedsInput(p) ? "Hinzugefügt – jetzt unten einrichten."
+            : "Hinzugefügt. Die Ereignisse erscheinen nach dem nächsten Abgleich im Zeitstrahl.");
+          await reloadPlugins();
+        } catch (e) { message.textContent = errMessage(e); add.disabled = false; }
       });
-      card.append(el("div", { class: "plugin-actions" }, add, status));
-      return card;
+      nodes.push(el("div", { class: "pd-actions" }, add), message);
+      return nodes;
     }
 
-    // Installiert: Einrichtung. Zugangsdaten werden nie vorbelegt (nur auf "Anzeigen"); leer gelassen
+    // Hinzugefuegt: Einrichtung. Zugangsdaten werden nie vorbelegt (nur auf "anzeigen"); leer gelassen
     // bleiben die gespeicherten erhalten. Einstellungen kommen aus config.yaml und sind vorbelegt.
     const inputs = {};
-    const addField = (f, value, isCredential) => {
-      const id = `plg_${p.id}_${f.key}`;
-      let input;
-      if (f.kind === "list") {
-        input = el("textarea", { id });
-        input.value = Array.isArray(value) ? value.join("\n") : (value || "");
-      } else {
-        const stored = isCredential && p.has_credentials;
-        input = el("input", { id, type: f.kind === "secret" ? "password" : "text", autocomplete: "off",
-          placeholder: stored ? "(gespeichert – zum Ändern neu eingeben)" : (f.placeholder || "") });
-        if (!isCredential) input.value = value == null ? "" : String(value);
-      }
-      inputs[f.key] = input;
-      const field = el("div", { class: "field" }, el("label", { for: id, text: f.label }), input);
-      if (f.help) field.append(el("div", { class: "help", text: f.help }));
-      card.append(field);
-    };
-    for (const f of p.credential_fields) addField(f, "", true);
-    for (const f of p.setting_fields) addField(f, cfg[f.key], false);
-
-    const saveBtn = el("button", { type: "button", class: "btn small", text: "Speichern & testen" });
-    const testBtn = el("button", { type: "button", class: "btn small", text: "Verbindung testen" });
-    const removeBtn = el("button", { type: "button", class: "btn small danger", text: "Entfernen" });
-    const actions = el("div", { class: "plugin-actions" });
-    if (p.credential_fields.length || p.setting_fields.length) actions.append(saveBtn);
-    actions.append(testBtn);
-
+    const form = el("div", { class: "pd-form" });
+    for (const f of p.credential_fields) form.append(pluginField(p, f, "", true, inputs));
+    for (const f of p.setting_fields) form.append(pluginField(p, f, (p.settings || {})[f.key], false, inputs));
+    const hasForm = p.credential_fields.length || p.setting_fields.length;
+    if (hasForm) {
+      nodes.push(el("div", { class: "pd-section" },
+        el("h4", { text: p.credential_fields.length ? "Zugang und Einstellungen" : "Einstellungen" }), form));
+    }
+    const actions = el("div", { class: "pd-actions" });
+    if (hasForm) {
+      const save = el("button", { type: "button", class: "btn primary", text: "Speichern & testen" });
+      save.addEventListener("click", () => savePlugin(p, inputs, save, message));
+      actions.append(save);
+    }
+    const test = el("button", { type: "button", class: "btn", text: "Testen" });
+    test.addEventListener("click", async () => {
+      message.textContent = "Teste …";
+      try { message.textContent = (await state.api.test_plugin(p.id)).message; }
+      catch (e) { message.textContent = errMessage(e); }
+    });
+    actions.append(test);
     if (p.credential_fields.length) {
-      const showBtn = el("button", { type: "button", class: "btn small", text: "Anzeigen" });
-      showBtn.addEventListener("click", async () => {
+      const show = el("button", { type: "button", class: "btn", text: "Zugangsdaten anzeigen" });
+      show.addEventListener("click", async () => {
         try {
           const c = await state.api.reveal_plugin_credentials(p.id);
           for (const f of p.credential_fields) {
             inputs[f.key].value = c[f.key] || "";
             if (f.kind === "secret") inputs[f.key].type = "text";
           }
-          status.textContent = "Gespeicherte Werte eingeblendet – zum Kopieren markieren.";
-        } catch (e) { status.textContent = errMessage(e); }
+          message.textContent = "Gespeicherte Werte eingeblendet – zum Kopieren markieren.";
+        } catch (e) { message.textContent = errMessage(e); }
       });
-      actions.append(showBtn);
+      actions.append(show);
     }
-    actions.append(removeBtn, status);
-    card.append(actions);
-
-    saveBtn.addEventListener("click", async () => {
-      status.textContent = "Speichere …";
-      saveBtn.disabled = true;
-      try {
-        if (p.setting_fields.length) {
-          const settings = {};
-          for (const f of p.setting_fields) settings[f.key] = inputs[f.key].value;
-          await state.api.save_config(settings);
-          for (const f of p.setting_fields) cfg[f.key] = inputs[f.key].value;
-        }
-        const creds = {};
-        let entered = false;
-        for (const f of p.credential_fields) {
-          creds[f.key] = inputs[f.key].value;
-          if (creds[f.key].trim()) entered = true;
-        }
-        let res;
-        if (entered) {
-          status.textContent = "Speichere und teste …";
-          res = await state.api.save_plugin_credentials(p.id, creds);
-        } else if (p.credential_fields.length && !p.has_credentials) {
-          throw new Error("Bitte die Zugangsdaten eingeben.");
-        } else {
-          status.textContent = "Teste …";
-          res = await state.api.test_plugin(p.id);
-        }
-        for (const f of p.credential_fields) if (f.kind === "secret") inputs[f.key].value = "";
-        await refresh();
-        // Nach dem Neuaufbau steht die Karte frisch da - die Meldung dort anzeigen.
-        const fresh = $(`plg_${p.id}_status`);
-        if (fresh) fresh.textContent = res.message || "Gespeichert.";
-      } catch (e) {
-        status.textContent = errMessage(e);
-        saveBtn.disabled = false;
-      }
-    });
-    status.id = `plg_${p.id}_status`;
-    testBtn.addEventListener("click", async () => {
-      status.textContent = "Teste …";
-      try { status.textContent = (await state.api.test_plugin(p.id)).message; }
-      catch (e) { status.textContent = errMessage(e); }
-    });
-    removeBtn.addEventListener("click", async () => {
+    const remove = el("button", { type: "button", class: "btn danger", text: "Entfernen" });
+    remove.addEventListener("click", async () => {
       if (!confirm(`Plugin „${p.name}“ entfernen?\n\nDie gespeicherten Zugangsdaten und alle Ereignisse dieses ` +
-                   "Plugins werden gelöscht. Erneutes Hinzufügen holt die Ereignisse des Sync-Fensters zurück.")) return;
-      removeBtn.disabled = true;
+                   "Plugins werden gelöscht. Erneutes Hinzufügen holt, was die Quelle noch hat, zurück.")) return;
+      remove.disabled = true;
       try {
         const res = await state.api.remove_plugin(p.id);
-        await refresh();
-        showBanner(`„${p.name}“ entfernt – ${res.removed_events} Ereignisse gelöscht.`, false);
-      } catch (e) { status.textContent = errMessage(e); removeBtn.disabled = false; }
+        setPluginMessage(p.id, `Entfernt – ${res.removed_events} Ereignisse gelöscht.`);
+        await reloadPlugins();
+      } catch (e) { message.textContent = errMessage(e); remove.disabled = false; }
     });
-    return card;
+    actions.append(remove);
+    nodes.push(actions, message);
+    return nodes;
+  }
+  function pluginField(p, f, value, isCredential, inputs) {
+    const id = `plg_${p.id}_${f.key}`;
+    const stored = isCredential && p.has_credentials;
+    const placeholder = stored ? "(gespeichert – zum Ändern neu eingeben)" : (f.placeholder || "");
+    const field = el("div", { class: "field" });
+    let input;
+    if (f.kind === "bool") {
+      input = el("input", { id, type: "checkbox" });
+      input.checked = value === undefined || value === null ? !!f.default : !!value;
+      field.append(el("label", { class: "check-field", for: id }, input, el("span", { text: f.label })));
+    } else {
+      if (f.kind === "select") {
+        input = el("select", { id });
+        for (const [v, label] of f.options) input.append(el("option", { value: v, text: label }));
+        input.value = value == null ? String(f.default ?? "") : String(value);
+      } else if (["list", "folders", "secretlist"].includes(f.kind)) {
+        input = el("textarea", { id, spellcheck: "false", placeholder });
+        if (!isCredential) input.value = Array.isArray(value) ? value.join("\n") : (value || "");
+      } else {
+        input = el("input", { id, autocomplete: "off", spellcheck: "false", placeholder,
+          type: f.kind === "secret" ? "password" : (f.kind === "number" ? "number" : "text") });
+        if (!isCredential) input.value = value == null ? "" : String(value);
+      }
+      field.append(el("label", { for: id, text: f.label + (f.optional ? "" : REQUIRED_HINT) }), input);
+      if (f.kind === "folders") {
+        const pick = el("button", { type: "button", class: "btn small", text: "Ordner hinzufügen …" });
+        pick.addEventListener("click", async () => {
+          try {
+            const dir = await state.api.choose_directory();
+            if (dir) input.value = (input.value.trim() ? input.value.trim() + "\n" : "") + dir;
+          } catch (e) { /* abgebrochen */ }
+        });
+        field.append(el("div", { class: "row" }, pick));
+      }
+    }
+    if (f.help) field.append(el("div", { class: "help", text: f.help }));
+    inputs[f.key] = input;
+    return field;
+  }
+  async function savePlugin(p, inputs, button, message) {
+    message.textContent = "Speichere …";
+    button.disabled = true;
+    try {
+      if (p.setting_fields.length) {
+        const values = {};
+        for (const f of p.setting_fields) values[f.key] = f.kind === "bool" ? inputs[f.key].checked : inputs[f.key].value;
+        await state.api.save_plugin_settings(p.id, values);
+      }
+      const creds = {};
+      let entered = false;
+      for (const f of p.credential_fields) {
+        creds[f.key] = inputs[f.key].value;
+        if (creds[f.key].trim()) entered = true;
+      }
+      let res;
+      if (entered) {
+        message.textContent = "Speichere und teste …";
+        res = await state.api.save_plugin_credentials(p.id, creds);
+      } else if (p.requires_credentials && !p.has_credentials) {
+        throw new Error("Bitte die Zugangsdaten eingeben.");
+      } else {
+        message.textContent = "Teste …";
+        res = await state.api.test_plugin(p.id);
+      }
+      setPluginMessage(p.id, res.message || "Gespeichert.");
+      await reloadPlugins();
+    } catch (e) {
+      message.textContent = errMessage(e);
+      button.disabled = false;
+    }
+  }
+  // Einstellungen: nur noch der Weg in den Plugin-Browser
+  function buildPluginsSummary() {
+    const holder = $("formFields");
+    const active = ((state.info && state.info.installed_plugins) || []).length;
+    const open = el("button", { type: "button", class: "btn", text: "Plugin-Browser öffnen …" });
+    open.addEventListener("click", () => showPlugins());
+    holder.append(el("div", { class: "section-title", text: "Plugins" }),
+      el("div", { class: "field" },
+        el("div", { class: "help", style: { gridColumn: "1 / -1" } },
+          (active ? `${active} Plugin${active === 1 ? "" : "s"} aktiv. ` : "Noch kein Plugin hinzugefügt. ") +
+          "Termine, Gespräche, Mails, Mitteilungen, besuchte Websites, Commits, PC-Zeiten und Orte kommen aus Plugins."),
+        el("div", { style: { gridColumn: "1 / -1" } }, open)));
+  }
+  // Ersteinrichtung: Plugins waehlen - nichts ist vorausgewaehlt
+  async function buildFirstRunPlugins() {
+    let list = [];
+    try { list = await state.api.list_plugins(); } catch (e) { return; }
+    state.firstRunPicks = new Set();
+    const cats = pluginCategories(list);
+    const sorted = [...list].sort((a, b) => cats.indexOf(a.category) - cats.indexOf(b.category));
+    const grid = el("div", { class: "pick-grid" });
+    for (const p of sorted) {
+      const box = el("input", { type: "checkbox", value: p.id });
+      box.disabled = !p.available;
+      const pick = el("label", { class: "pick" + (p.available ? "" : " disabled"), title: p.available ? p.description : (p.unavailable_reason || "") },
+        box, pluginIcon(p, "small"),
+        el("span", { class: "p-name" }, p.name, p.privacy ? el("span", { class: "badge sensitive", text: "sensibel" }) : null,
+          p.account !== "none" ? el("span", { class: "badge", text: "Zugangsdaten" }) : null),
+        el("span", { class: "p-sum", text: p.available ? p.summary : (p.unavailable_reason || "Auf diesem PC nicht verfügbar.") }));
+      box.addEventListener("change", () => {
+        if (box.checked) state.firstRunPicks.add(p.id); else state.firstRunPicks.delete(p.id);
+        pick.classList.toggle("checked", box.checked);
+      });
+      grid.append(pick);
+    }
+    $("formFields").prepend(el("div", { class: "firstrun-plugins" },
+      el("div", { class: "section-title", text: "Plugins (optional)" }),
+      el("p", { class: "help", text: "Plugins holen mehr in den Zeitstrahl: Termine, Gespräche, Mails, Mitteilungen, besuchte Websites, " +
+        "Commits, PC-Zeiten und Orte. Nichts ist vorausgewählt – alles lässt sich später über „Plugins“ oben rechts " +
+        "hinzufügen oder entfernen. Plugins mit Zugangsdaten richten Sie nach dem Start dort ein." }),
+      grid));
+  }
+  async function notifyPluginSetup(ids) {
+    let list = [];
+    try { list = await state.api.list_plugins(); } catch (e) { return; }
+    const open = list.filter((p) => ids.includes(p.id) && p.installed && p.problem);
+    if (!open.length) return;
+    const names = open.map((p) => p.name).join(", ");
+    showBanner(`${open.length === 1 ? "Ein Plugin braucht" : open.length + " Plugins brauchen"} noch Zugangsdaten oder Einstellungen: ${names}.`,
+      false, { label: "Jetzt einrichten", run: () => showPlugins(open[0].id) });
   }
   // Was diese Ausgabe kann (edition.py). Fehlt die Angabe (aelteres Programm), gilt alles als vorhanden.
   function hasFeature(name) {
@@ -1013,6 +1223,7 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
       if (!input) continue;
       values[f.key] = input.value;
     }
+    if (state.mode === "setup" && state.firstRunPicks) values.installed_plugins = [...state.firstRunPicks];
     return values;
   }
   async function submitForm(e) {
@@ -1035,6 +1246,7 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
         state.date = info.today;
         await loadDay();
         startPolling();
+        if (values.installed_plugins && values.installed_plugins.length) notifyPluginSetup(values.installed_plugins);
       } else {
         const res = await state.api.save_config(values);
         $("formNote").textContent = res.restart_required ? "Gespeichert. Einige Änderungen wirken erst nach einem Neustart des Dienstes." : "Gespeichert.";
@@ -1053,6 +1265,7 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
   async function leaveSetup() {
     state.mode = "timeline";
     $("setupView").hidden = true;
+    $("pluginsBtn").hidden = false;
     $("timelineView").hidden = false;
     $("daynav").style.visibility = "visible";
     if (!state.pollTimer) startPolling();   // showSetup hatte es gestoppt
@@ -1062,7 +1275,9 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
   function bindEvents() {
     $("updateBtn").addEventListener("click", startUpdate);
     $("checkUpdatesBtn").addEventListener("click", checkUpdates);
-    $("updateNotesBtn").addEventListener("click", () => { const n = $("updateNotes"); n.hidden = !n.hidden; });
+    $("updateLink").addEventListener("click", async () => {
+      try { await state.api.open_release_page(); } catch (e) { showBanner("Release-Seite: " + errMessage(e), true); }
+    });
     $("prevDay").addEventListener("click", () => setDate(addDays(state.date, -1)));
     $("nextDay").addEventListener("click", () => setDate(addDays(state.date, 1)));
     $("todayBtn").addEventListener("click", () => setDate(todayIso()));
@@ -1077,8 +1292,16 @@ ${ev.start_label}–${ev.end_label} · ${ev.duration_label}`;
     });
     $("settingsBtn").addEventListener("click", () => {
       if (state.mode === "settings") leaveSetup().then(() => refresh());
-      else if (state.mode === "timeline") showSetup("settings");
+      else if (state.mode === "timeline" || state.mode === "plugins") showSetup("settings");
     });
+    $("pluginsBtn").addEventListener("click", () => {
+      if (state.mode === "plugins") leavePlugins();
+      else if (state.mode !== "setup") showPlugins();
+    });
+    $("pluginsBack").addEventListener("click", leavePlugins);
+    $("pluginSearch").addEventListener("input", (e) => { state.pluginFilter.q = e.target.value; renderPluginBrowser(); });
+    $("pluginOnlyInstalled").addEventListener("change", (e) => { state.pluginFilter.installed = e.target.checked; renderPluginBrowser(); });
+    $("pluginOnlyLocal").addEventListener("change", (e) => { state.pluginFilter.local = e.target.checked; renderPluginBrowser(); });
     $("cancelBtn").addEventListener("click", () => leaveSetup().then(() => refresh()));
     $("setupForm").addEventListener("submit", submitForm);
     $("prevEntry").addEventListener("click", () => stepEntry(-1));

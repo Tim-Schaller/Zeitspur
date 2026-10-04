@@ -72,8 +72,10 @@ def _section(title: str, body: str) -> str:
 def build(release: bool) -> str:
     parts = ["Zeitspur - Lizenzen der mitgelieferten Komponenten\n\n"
              "Zeitspur selbst steht unter der MIT-Lizenz mit Commons-Clause-Zusatz (LICENSE.txt). Die folgenden\n"
-             "Bestandteile behalten ihre eigenen Lizenzen. pystray (LGPL-3.0) liegt unveraendert als eigene Dateien\n"
-             "unter _internal\\pystray und laesst sich dort durch eine andere Version ersetzen.\n\n"]
+             "Bestandteile behalten ihre eigenen Lizenzen. pystray, recurring-ical-events und x-wr-timezone\n"
+             "(LGPL-3.0) liegen unveraendert als eigene Dateien unter _internal\\pystray,\n"
+             "_internal\\recurring_ical_events und _internal\\x_wr_timezone und lassen sich dort durch andere\n"
+             "Versionen ersetzen.\n\n"]
     python_license = Path(sys.base_prefix) / "LICENSE.txt"
     parts.append(_section(f"Python {sys.version.split()[0]} - PSF License Version 2",
                           python_license.read_text(encoding="utf-8", errors="replace")

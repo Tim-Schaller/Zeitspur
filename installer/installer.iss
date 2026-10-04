@@ -52,7 +52,7 @@ FinishedLabel=Das Setup hat [name] auf Ihrem Computer installiert. Später öffn
 
 [Tasks]
 Name: "autostart"; Description: "Zeitspur beim Anmelden automatisch starten (Tray-Symbol)"; GroupDescription: "Autostart:"
-Name: "claudedesktop"; Description: "MCP-Server in Claude Desktop registrieren (claude_desktop_config.json wird ergänzt, Backup .bak)"; GroupDescription: "Claude-Integration:"; Flags: unchecked
+Name: "claudedesktop"; Description: "MCP-Server in Claude Desktop registrieren (claude_desktop_config.json wird ergänzt, Backup .bak – Claude Desktop muss dafür ganz beendet sein)"; GroupDescription: "Claude-Integration:"; Flags: unchecked
 
 [InstallDelete]
 ; Vor dem Kopieren die alten Programmbibliotheken entfernen. Sonst blieben Module liegen, die in der neuen
@@ -73,7 +73,8 @@ Name: "{group}\Zeitspur deinstallieren"; Filename: "{uninstallexe}"
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Zeitspur"; ValueData: """{app}\{#MyAppExeName}"" --autostart"; Flags: uninsdeletevalue; Tasks: autostart; Check: AutostartWanted
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--mcp --register-claude-desktop --quiet"; Flags: runhidden waituntilterminated skipifsilent; Tasks: claudedesktop; StatusMsg: "MCP-Server wird in Claude Desktop registriert …"
+; Die Registrierung in Claude Desktop (Aufgabe "claudedesktop") steht im [Code]-Abschnitt (RegisterClaudeDesktop):
+; Sie muss nachfragen koennen, solange Claude Desktop laeuft.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--show"; Description: "Zeitspur jetzt starten (Ersteinrichtung)"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
@@ -84,6 +85,9 @@ const
   WebView2KeyLM = 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
   WebView2KeyCU = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
   WebView2DownloadUrl = 'https://developer.microsoft.com/microsoft-edge/webview2/consumer/';
+  { Rueckgabewert von "--mcp --register-claude-desktop", solange Claude Desktop laeuft - dann wurde nichts
+    eingetragen (zeitspur/mcp_server.py: EXIT_CLAUDE_DESKTOP_RUNNING) }
+  ClaudeDesktopRunningExitCode = 4;
 
 var
   WebView2Page: TOutputMarqueeProgressWizardPage;
@@ -250,6 +254,57 @@ begin
     WizardForm.PageDescriptionLabel.Caption := 'Das dauert meist unter einer Minute. Danach startet Zeitspur ' +
       'von selbst wieder – Einstellungen und Aufnahmen bleiben erhalten.';
   end;
+end;
+
+{ Traegt den MCP-Server in Claude Desktop ein (Aufgabe "claudedesktop"). Zeitspur.exe findet die richtige
+  claude_desktop_config.json selbst - die Ausgabe aus dem Microsoft Store liest sie aus ihrem Paketordner, nicht
+  aus %APPDATA%\Claude - und schreibt nichts, solange Claude Desktop laeuft: Es haelt seine Konfiguration im
+  Speicher und wuerde den Eintrag wieder ueberschreiben. Beendet wird Claude Desktop bewusst nicht (offene
+  Unterhaltungen); wir bitten darum und bieten "Wiederholen" an. }
+procedure RegisterClaudeDesktop;
+var
+  ResultCode: Integer;
+  Exe, Later: String;
+begin
+  Exe := ExpandConstant('{app}\{#MyAppExeName}');
+  Later := 'Nachholen lässt sich die Registrierung später mit:' + #13#10 + '"' + Exe + '" --mcp --register-claude-desktop';
+  WizardForm.StatusLabel.Caption := 'MCP-Server wird in Claude Desktop registriert …';
+  while True do
+  begin
+    if not Exec(Exe, '--mcp --register-claude-desktop --quiet', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      Log('Claude-Desktop-Registrierung nicht gestartet: ' + SysErrorMessage(ResultCode));
+      Exit;
+    end;
+    Log(Format('Claude-Desktop-Registrierung: Rueckgabewert %d', [ResultCode]));
+    if ResultCode = 0 then
+      Exit;
+    if ResultCode <> ClaudeDesktopRunningExitCode then
+    begin
+      MsgBox('Zeitspur konnte nicht in Claude Desktop eingetragen werden (Fehlercode ' + IntToStr(ResultCode) + '). ' +
+             'Details stehen in ' + ExpandConstant('{localappdata}\Zeitspur\logs\mcp.log') + '.' + #13#10#13#10 + Later,
+             mbError, MB_OK);
+      Exit;
+    end;
+    if MsgBox('Claude Desktop läuft gerade. Solange es läuft, schreibt es seine Einstellungen mit dem eigenen Stand ' +
+              'zurück – der Eintrag für Zeitspur ginge dabei wieder verloren.' + #13#10#13#10 +
+              'Bitte Claude Desktop vollständig beenden: mit der rechten Maustaste auf das Claude-Symbol im ' +
+              'Infobereich der Taskleiste klicken und „Beenden“ wählen. Das Fenster nur zu schließen genügt nicht. ' +
+              'Danach auf „Wiederholen“ klicken.' + #13#10#13#10 +
+              '„Abbrechen“ überspringt die Registrierung. ' + Later,
+              mbInformation, MB_RETRYCANCEL) <> IDRETRY then
+    begin
+      Log('Claude-Desktop-Registrierung uebersprungen: Claude Desktop laeuft');
+      Exit;
+    end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  { Wie frueher der [Run]-Eintrag mit skipifsilent: Stille Installationen und Updates fragen nicht nach. }
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('claudedesktop') and not WizardSilent then
+    RegisterClaudeDesktop;
 end;
 
 { Nach einem stillen Update Zeitspur wieder starten - auch wenn das Setup abgebrochen ist, denn beendet

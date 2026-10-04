@@ -6,7 +6,8 @@ Claude vergangene Aktivitaeten abfragen kann. stdout ist der JSON-RPC-Kanal: Log
 ausschliesslich in %LOCALAPPDATA%\\Zeitspur\\logs\\mcp.log.
 
 Zusatzfunktionen:
-  --register-claude-desktop   traegt den Server in claude_desktop_config.json ein (mit Backup)
+  --register-claude-desktop   traegt den Server in claude_desktop_config.json ein (mit Backup); nur bei
+                              beendetem Claude Desktop, sonst Rueckgabewert 4
   --print-config              zeigt die Konfigurationsschnipsel fuer Claude Desktop / Claude Code
 """
 from __future__ import annotations
@@ -488,29 +489,120 @@ def server_command() -> dict[str, Any]:
             "env": {"PYTHONPATH": str(root)}}
 
 
-def claude_desktop_config_path() -> Path:
-    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-    return Path(base) / "Claude" / "claude_desktop_config.json"
+# Claude Desktop gibt es in zwei Ausgaben, die ihre Konfiguration an verschiedenen Orten lesen:
+#  - Microsoft Store / WinGet / MSIX-Paket: Programm unter ...\WindowsApps\Claude_<Version>_x64__<Kennung>\.
+#    Das Paket laeuft in einem App-Container: Dateien, die es unter %APPDATA% neu anlegt, legt Windows in
+#    %LOCALAPPDATA%\Packages\Claude_<Kennung>\LocalCache\Roaming\ ab und liest sie bevorzugt von dort.
+#    Eine Datei unter %APPDATA%\Claude sieht diese Ausgabe dann nicht.
+#  - klassisches Setup: Programm unter %LOCALAPPDATA%\AnthropicClaude\, Konfiguration unter %APPDATA%\Claude.
+CLAUDE_CONFIG_NAME = "claude_desktop_config.json"
+# Paketfamilienname = Paketname + "_" + Herausgeber-Kennung. Paketnamen enthalten keinen Unterstrich, das
+# Muster trifft also genau Pakete namens "Claude" - ohne die Kennung fest einzubauen.
+CLAUDE_PACKAGE_PATTERN = "Claude_*"
+# Rueckgabewert von --register-claude-desktop, solange Claude Desktop laeuft (installer.iss wertet ihn aus)
+EXIT_CLAUDE_DESKTOP_RUNNING = 4
 
 
-def register_claude_desktop(config_file: Path | None = None) -> Path:
-    """Traegt den Server unter mcpServers.zeitspur ein; bestehende Eintraege bleiben erhalten (Backup .bak)."""
-    path = config_file or claude_desktop_config_path()
-    data: dict[str, Any] = {}
-    if path.exists():
-        raw = path.read_text(encoding="utf-8").strip()
-        if raw:
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                raise ValueError(f"{path} enthält kein JSON-Objekt")
-        shutil.copy2(path, path.with_suffix(".json.bak"))
-    servers = data.setdefault("mcpServers", {})
-    if not isinstance(servers, dict):
-        raise ValueError("mcpServers ist kein Objekt")
-    servers[SERVER_NAME] = server_command()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return path
+def _env_dir(name: str, fallback: str) -> Path:
+    return Path(os.environ.get(name) or Path.home() / "AppData" / fallback)
+
+
+def claude_desktop_package_dirs() -> list[Path]:
+    """Paketordner der Store-Ausgabe von Claude Desktop (%LOCALAPPDATA%\\Packages\\Claude_<Kennung>)."""
+    try:
+        return sorted(p for p in (_env_dir("LOCALAPPDATA", "Local") / "Packages").glob(CLAUDE_PACKAGE_PATTERN)
+                      if p.is_dir())
+    except OSError:
+        return []
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def claude_desktop_config_paths() -> list[Path]:
+    """Die claude_desktop_config.json-Dateien, die Claude Desktop liest - die der Store-Ausgabe zuerst.
+
+    Vorhandene Dateien kommen alle zurueck: Beide Ausgaben koennen nebeneinander installiert sein, oder eine
+    fruehere Registrierung hat %APPDATA%\\Claude angelegt. Gibt es noch keine, die anzulegende Datei: im
+    Paketordner, wenn Claude Desktop aus dem Store stammt, sonst unter %APPDATA%\\Claude.
+    Zeigen zwei Pfade auf dieselbe Datei (laeuft dieser Prozess selbst im Container von Claude Desktop, leitet
+    Windows auch %APPDATA%\\Claude dorthin um), zaehlt sie nur einmal - sonst ueberschriebe die zweite
+    Sicherung .bak die erste mit dem bereits geaenderten Stand.
+    """
+    store = [d / "LocalCache" / "Roaming" / "Claude" / CLAUDE_CONFIG_NAME for d in claude_desktop_package_dirs()]
+    classic = _env_dir("APPDATA", "Roaming") / "Claude" / CLAUDE_CONFIG_NAME
+    found: list[Path] = []
+    for path in (*store, classic):
+        if path.is_file() and not any(_same_file(path, seen) for seen in found):
+            found.append(path)
+    return found or store or [classic]
+
+
+def is_claude_desktop_exe(path: str | None) -> bool:
+    """Gehoert diese Programmdatei zu Claude Desktop (Store- oder klassische Ausgabe)?
+
+    Claude Code heisst ebenfalls claude.exe - eigenstaendig installiert oder von Claude Desktop unter
+    %APPDATA%\\Claude\\claude-code\\ mitgebracht - und zaehlt nicht: Es schreibt claude_desktop_config.json nicht.
+    """
+    p = (path or "").replace("/", "\\").lower()
+    return p.endswith("\\claude.exe") and ("\\windowsapps\\claude_" in p or "\\anthropicclaude\\" in p)
+
+
+def claude_desktop_running() -> bool:
+    """Laeuft Claude Desktop? Dann haelt es seine Konfiguration im Speicher und schreibt die ganze Datei bei
+    naechster Gelegenheit (etwa geaenderten Einstellungen) neu - ein Eintrag von aussen ginge verloren.
+    Am 04.10.2026 so beobachtet: Ein von Hand ergaenzter Server war nach wenigen Minuten wieder weg."""
+    import psutil
+
+    for proc in psutil.process_iter(["name"]):
+        if (proc.info.get("name") or "").lower() != "claude.exe":
+            continue
+        try:
+            if is_claude_desktop_exe(proc.exe()):
+                return True
+        except psutil.Error:
+            continue
+    return False
+
+
+def _load_claude_config(path: Path) -> dict[str, Any]:
+    # utf-8-sig: von Hand bearbeitete Dateien tragen oft ein BOM, json.loads wuerde daran scheitern
+    raw = path.read_text(encoding="utf-8-sig").strip() if path.exists() else ""
+    if not raw:
+        return {"mcpServers": {}}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} ist kein gültiges JSON ({e})") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} enthält kein JSON-Objekt")
+    if not isinstance(data.setdefault("mcpServers", {}), dict):
+        raise ValueError(f"{path}: mcpServers ist kein Objekt")
+    return data
+
+
+def register_claude_desktop(config_file: Path | None = None) -> list[Path]:
+    """Traegt den Server unter mcpServers.Zeitspur ein - in config_file oder in jede Datei, die Claude Desktop
+    liest (claude_desktop_config_paths). Bestehende Eintraege bleiben erhalten, vorher wird je Datei eine
+    Sicherung <Datei>.bak angelegt. Erst werden alle Dateien gelesen und geprueft, dann geschrieben: Ist eine
+    kaputt, bleiben alle unveraendert.
+
+    Laeuft Claude Desktop, ueberschreibt es die Aenderung wieder - vorher claude_desktop_running() pruefen
+    (register_cli tut das)."""
+    targets = [Path(config_file)] if config_file else claude_desktop_config_paths()
+    configs = [(path, _load_claude_config(path)) for path in targets]
+    command = server_command()
+    for path, data in configs:
+        data["mcpServers"][SERVER_NAME] = command
+        if path.exists():
+            shutil.copy2(path, path.with_suffix(".json.bak"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return targets
 
 
 def config_snippets() -> str:
@@ -518,7 +610,61 @@ def config_snippets() -> str:
     desktop = json.dumps({"mcpServers": {SERVER_NAME: cmd}}, indent=2, ensure_ascii=False)
     parts = [cmd["command"], *cmd.get("args", [])]
     code = f"claude mcp add {SERVER_NAME} -- " +" ".join(f'"{p}"' if " " in p else p for p in parts)
-    return f"Claude Desktop ({claude_desktop_config_path()}):\n{desktop}\n\nClaude Code:\n{code}\n"
+    files = "\n".join(f"  {p}" for p in claude_desktop_config_paths())
+    return (f"Claude Desktop – Konfigurationsdatei:\n{files}\n"
+            f"(Claude Desktop vorher vollständig beenden, sonst überschreibt es die Änderung)\n{desktop}\n\n"
+            f"Claude Code:\n{code}\n")
+
+
+MB_ICONERROR = 0x10
+MB_RETRYCANCEL_WARNING = 0x05 | 0x30   # MB_RETRYCANCEL | MB_ICONWARNING
+IDRETRY = 4
+
+CLAUDE_RUNNING_TEXT = (
+    "Claude Desktop läuft gerade. Es hält seine Einstellungen im Speicher und schreibt sie bei nächster "
+    "Gelegenheit zurück – ein Eintrag für Zeitspur würde dabei wieder überschrieben.\n\n"
+    "Bitte Claude Desktop vollständig beenden: mit der rechten Maustaste auf das Claude-Symbol im Infobereich "
+    "der Taskleiste klicken und „Beenden“ wählen. Das Fenster nur zu schließen genügt nicht, dann läuft "
+    "Claude Desktop im Hintergrund weiter.")
+
+
+def _notify(text: str, *, quiet: bool, flags: int = 0x40) -> None:
+    """Meldung an den Nutzer: in der Konsole als Text, als Fenster-Programm (ohne stdout) als Meldungsfenster."""
+    if sys.stdout:
+        print(text)
+    elif not quiet:
+        from . import winutil
+
+        winutil.message_box(text, flags=flags)
+
+
+def register_cli(*, quiet: bool) -> int:
+    """--register-claude-desktop: nur bei beendetem Claude Desktop eintragen und das Ergebnis melden.
+
+    Claude Desktop wird bewusst nie selbst beendet (offene Unterhaltungen, laufende Antworten). Als
+    Fenster-Programm gibt es "Wiederholen"; die Konsole und der Installer (--quiet) bekommen
+    EXIT_CLAUDE_DESKTOP_RUNNING und fragen selbst nach."""
+    from . import winutil
+
+    while claude_desktop_running():
+        log.warning("Claude Desktop laeuft - Registrierung nicht geschrieben")
+        if sys.stdout or quiet:
+            _notify(CLAUDE_RUNNING_TEXT + "\n\nDanach den Befehl erneut ausführen.", quiet=quiet)
+            return EXIT_CLAUDE_DESKTOP_RUNNING
+        if winutil.message_box(CLAUDE_RUNNING_TEXT + "\n\nDanach auf „Wiederholen“ klicken.",
+                               flags=MB_RETRYCANCEL_WARNING) != IDRETRY:
+            return EXIT_CLAUDE_DESKTOP_RUNNING
+    try:
+        paths = register_claude_desktop()
+    except (OSError, ValueError) as e:
+        log.error("Registrierung in Claude Desktop fehlgeschlagen: %s", e)
+        _notify(f"Zeitspur konnte nicht in Claude Desktop eingetragen werden:\n\n{e}", quiet=quiet, flags=MB_ICONERROR)
+        return 1
+    files = "\n".join(str(p) for p in paths)
+    log.info("Claude-Desktop-Konfiguration aktualisiert: %s", ", ".join(str(p) for p in paths))
+    _notify(f"Zeitspur wurde in Claude Desktop eingetragen:\n\n{files}\n\n"
+            "Claude Desktop jetzt wieder starten – dann steht Zeitspur dort bereit.", quiet=quiet)
+    return 0
 
 
 def _setup_logging() -> None:
@@ -538,7 +684,7 @@ def _setup_logging() -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="ZeitspurMCP", description="Zeitspur MCP-Server (stdio, read-only)")
-    p.add_argument("--register-claude-desktop", action="store_true", help="in claude_desktop_config.json eintragen")
+    p.add_argument("--register-claude-desktop", action="store_true", help="in claude_desktop_config.json eintragen (Claude Desktop vorher ganz beenden)")
     p.add_argument("--print-config", action="store_true", help="Konfigurationsschnipsel ausgeben")
     p.add_argument("--quiet", action="store_true", help="keine Meldungsfenster (fuer den Installer)")
     p.add_argument("--version", action="store_true")
@@ -554,24 +700,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{APP_NAME} MCP {__version__}")
         return 0
     if args.register_claude_desktop:
-        path = register_claude_desktop()
-        msg = f"Zeitspur wurde in Claude Desktop registriert:\n{path}\n\nClaude Desktop bitte neu starten."
-        log.info("Claude-Desktop-Konfiguration aktualisiert: %s", path)
-        if sys.stdout:
-            print(msg)
-        elif not args.quiet:
-            from . import winutil
-
-            winutil.message_box(msg)
-        return 0
+        return register_cli(quiet=args.quiet)
     if args.print_config:
-        text = config_snippets()
-        if sys.stdout:
-            print(text)
-        elif not args.quiet:
-            from . import winutil
-
-            winutil.message_box(text)
+        _notify(config_snippets(), quiet=args.quiet)
         return 0
     if sys.stdin is None or sys.stdout is None:
         from . import winutil

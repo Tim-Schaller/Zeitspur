@@ -1,19 +1,70 @@
 import asyncio
 import io
 import json
+import os
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
+import psutil
 import pytest
 from PIL import Image
 
-from zeitspur import timeutil
+from zeitspur import mcp_server, timeutil, winutil
 from zeitspur.config import Config
-from zeitspur.mcp_server import (ActivityReader, ActivityTools, build_server, register_claude_desktop, server_command)
+from zeitspur.mcp_server import (ActivityReader, ActivityTools, build_server, claude_desktop_config_paths,
+                                 claude_desktop_running, is_claude_desktop_exe, register_claude_desktop,
+                                 server_command)
 from zeitspur.storage import Storage
 from tests.helpers import make_entry, make_webp
 
 DAY = datetime(2026, 9, 9)  # Mittwoch
 T = lambda h, m=0, s=0: timeutil.to_ms(DAY.replace(hour=h, minute=m, second=s))  # noqa: E731
+
+# Erfundene Herausgeber-Kennung: Die Suche darf nicht an der echten Kennung der Store-Ausgabe haengen.
+STORE_PACKAGE = "Claude_q1w2e3r4t5y6u"
+STORE_EXE = r"C:\Program Files\WindowsApps\Claude_2.0.0.0_x64__q1w2e3r4t5y6u\app\Claude.exe"
+CLASSIC_EXE = r"C:\Users\Mustermann\AppData\Local\AnthropicClaude\app-1.0.0\claude.exe"
+BUNDLED_CODE_EXE = r"C:\Users\Mustermann\AppData\Roaming\Claude\claude-code\2.1.0\abc123\claude.exe"
+
+
+@pytest.fixture(autouse=True)
+def claude_home(tmp_path, monkeypatch):
+    """Erfundene AppData-Ordner fuer jeden Test dieser Datei - die echte Claude-Desktop-Konfiguration wird nie
+    gelesen oder geschrieben. store/classic: Konfigurationsdatei der Store-Ausgabe bzw. des klassischen Setups."""
+    local, roaming = tmp_path / "AppData" / "Local", tmp_path / "AppData" / "Roaming"
+    local.mkdir(parents=True)
+    roaming.mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    package = local / "Packages" / STORE_PACKAGE
+    return SimpleNamespace(package=package,
+                           store=package / "LocalCache" / "Roaming" / "Claude" / "claude_desktop_config.json",
+                           classic=roaming / "Claude" / "claude_desktop_config.json")
+
+
+@pytest.fixture
+def cli(monkeypatch):
+    """main() ohne echtes Logging-Setup, ohne echte Meldungsfenster und ohne Blick auf die echten Prozesse.
+    Meldungsfenster werden in shown gesammelt; answers sind die Klicks (Standard: OK)."""
+    monkeypatch.setattr(mcp_server, "_setup_logging", lambda: None)
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: False)
+    boxes = SimpleNamespace(shown=[], answers=[])
+
+    def fake_box(text, title="Zeitspur", flags=0x40):
+        boxes.shown.append((text, flags))
+        return boxes.answers.pop(0) if boxes.answers else 1   # IDOK
+
+    monkeypatch.setattr(winutil, "message_box", fake_box)
+    return boxes
+
+
+def _write_json(path, data, encoding="utf-8"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding=encoding)
+
+
+def _read_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture
@@ -136,13 +187,198 @@ def test_register_claude_desktop_merges_config(tmp_path):
     cfg_file = tmp_path / "Claude" / "claude_desktop_config.json"
     cfg_file.parent.mkdir()
     cfg_file.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}, "theme": "dark"}), encoding="utf-8")
-    path = register_claude_desktop(cfg_file)
-    data = json.loads(path.read_text(encoding="utf-8"))
+    assert register_claude_desktop(cfg_file) == [cfg_file]
+    data = _read_json(cfg_file)
     assert data["theme"] == "dark" and data["mcpServers"]["other"] == {"command": "x"}
     assert data["mcpServers"]["Zeitspur"] == server_command()
     assert (tmp_path / "Claude" / "claude_desktop_config.json.bak").exists()
-    fresh = register_claude_desktop(tmp_path / "neu" / "claude_desktop_config.json")
-    assert json.loads(fresh.read_text(encoding="utf-8"))["mcpServers"]["Zeitspur"]["command"]
+    [fresh] = register_claude_desktop(tmp_path / "neu" / "claude_desktop_config.json")
+    assert _read_json(fresh)["mcpServers"]["Zeitspur"]["command"]
+
+
+def test_config_path_of_store_version(claude_home):
+    """Store-/MSIX-Ausgabe: Claude Desktop liest die Datei im Paketordner, nicht unter %APPDATA%\\Claude."""
+    _write_json(claude_home.store, {"preferences": {}})
+    # andere Pakete mit aehnlichem Namen zaehlen nicht
+    _write_json(claude_home.package.parent / "ClaudeHelper_a1b2c3d4e5f6g" / "LocalCache" / "Roaming" / "Claude"
+                / "claude_desktop_config.json", {})
+    assert claude_desktop_config_paths() == [claude_home.store]
+
+
+def test_config_paths_when_both_exist(claude_home):
+    """Beide Dateien vorhanden (beide Ausgaben installiert oder eine fruehere Registrierung): beide, Store zuerst."""
+    _write_json(claude_home.classic, {})
+    assert claude_desktop_config_paths() == [claude_home.classic]
+    _write_json(claude_home.store, {})
+    assert claude_desktop_config_paths() == [claude_home.store, claude_home.classic]
+
+
+def test_config_path_before_claude_desktop_wrote_one(claude_home):
+    """Noch keine Datei: anlegen, wo die installierte Ausgabe liest."""
+    assert claude_desktop_config_paths() == [claude_home.classic]   # klassisches Setup (oder noch nichts installiert)
+    claude_home.package.mkdir(parents=True)                          # Store-Ausgabe installiert
+    assert claude_desktop_config_paths() == [claude_home.store]
+
+
+def test_register_writes_every_config_claude_desktop_reads(claude_home):
+    _write_json(claude_home.store, {"mcpServers": {"Andere": {"command": "x"}}, "preferences": {"a": 1}},
+                encoding="utf-8-sig")   # mit BOM, wie von manchem Editor gespeichert
+    _write_json(claude_home.classic, {"theme": "dark"})
+    assert register_claude_desktop() == [claude_home.store, claude_home.classic]
+    store = _read_json(claude_home.store)
+    assert store["mcpServers"] == {"Andere": {"command": "x"}, "Zeitspur": server_command()}
+    assert store["preferences"] == {"a": 1}
+    assert _read_json(claude_home.classic) == {"theme": "dark", "mcpServers": {"Zeitspur": server_command()}}
+    # je Datei eine Sicherung des vorherigen Stands
+    assert json.loads(claude_home.store.with_suffix(".json.bak").read_text(encoding="utf-8-sig"))["mcpServers"] == {
+        "Andere": {"command": "x"}}
+    assert _read_json(claude_home.classic.with_suffix(".json.bak")) == {"theme": "dark"}
+
+
+def test_register_creates_config_of_store_version(claude_home):
+    claude_home.package.mkdir(parents=True)
+    assert register_claude_desktop() == [claude_home.store]
+    assert _read_json(claude_home.store) == {"mcpServers": {"Zeitspur": server_command()}}
+    assert not claude_home.classic.exists()
+
+
+def test_register_writes_one_file_only_once(claude_home):
+    """Laeuft der Prozess im Container von Claude Desktop, fuehrt auch %APPDATA%\\Claude zur Datei im Paketordner
+    (hier per Hardlink nachgestellt). Sie wird nur einmal geschrieben - sonst ersetzte die zweite Sicherung die
+    erste durch den schon geaenderten Stand."""
+    _write_json(claude_home.store, {"theme": "dark"})
+    claude_home.classic.parent.mkdir(parents=True)
+    try:
+        os.link(claude_home.store, claude_home.classic)
+    except OSError:
+        pytest.skip("Dateisystem ohne Hardlinks")
+    assert register_claude_desktop() == [claude_home.store]
+    assert _read_json(claude_home.store.with_suffix(".json.bak")) == {"theme": "dark"}
+    assert _read_json(claude_home.classic)["mcpServers"]["Zeitspur"] == server_command()
+    assert not claude_home.classic.with_suffix(".json.bak").exists()
+
+
+def test_register_leaves_all_files_alone_if_one_is_broken(claude_home):
+    _write_json(claude_home.store, {"theme": "dark"})
+    claude_home.classic.parent.mkdir(parents=True)
+    claude_home.classic.write_text('{"mcpServers": ', encoding="utf-8")
+    with pytest.raises(ValueError, match="kein gültiges JSON"):
+        register_claude_desktop()
+    assert _read_json(claude_home.store) == {"theme": "dark"}
+    assert not claude_home.store.with_suffix(".json.bak").exists()
+    _write_json(claude_home.classic, {"mcpServers": []})
+    with pytest.raises(ValueError, match="mcpServers ist kein Objekt"):
+        register_claude_desktop()
+    assert _read_json(claude_home.store) == {"theme": "dark"}
+
+
+@pytest.mark.parametrize("exe, expected", [
+    (STORE_EXE, True),
+    (STORE_EXE.replace("\\", "/").upper(), True),
+    (CLASSIC_EXE, True),
+    (r"C:\Users\Mustermann\AppData\Local\AnthropicClaude\claude.exe", True),   # Startprogramm des Setups
+    (BUNDLED_CODE_EXE, False),                                                 # Claude Code aus Claude Desktop
+    (r"C:\Users\Mustermann\.local\bin\claude.exe", False),                     # Claude Code eigenstaendig
+    (r"C:\Program Files\WindowsApps\Claude_2.0.0.0_x64__q1w2e3r4t5y6u\app\resources\helper.exe", False),
+    (r"C:\Program Files\WindowsApps\ClaudeHelper_1.0.0.0_x64__q1w2e3r4t5y6u\claude.exe", False),
+    (None, False),
+])
+def test_is_claude_desktop_exe(exe, expected):
+    assert is_claude_desktop_exe(exe) is expected
+
+
+class _FakeProcess:
+    def __init__(self, name, exe):
+        self.info = {"name": name}
+        self._exe = exe
+
+    def exe(self):
+        if isinstance(self._exe, Exception):
+            raise self._exe
+        return self._exe
+
+
+def test_claude_desktop_running(monkeypatch):
+    procs = [_FakeProcess("explorer.exe", r"C:\Windows\explorer.exe"),
+             _FakeProcess("claude.exe", BUNDLED_CODE_EXE),               # Claude Code laeuft - zaehlt nicht
+             _FakeProcess("claude.exe", psutil.AccessDenied(4711)),      # Pfad nicht lesbar - zaehlt nicht
+             _FakeProcess(None, None)]
+    monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter(procs))
+    assert claude_desktop_running() is False
+    procs.append(_FakeProcess("Claude.exe", STORE_EXE))
+    assert claude_desktop_running() is True
+    procs[-1] = _FakeProcess("claude.exe", CLASSIC_EXE)
+    assert claude_desktop_running() is True
+
+
+def test_cli_registers_when_claude_desktop_is_closed(claude_home, cli, capsys):
+    claude_home.package.mkdir(parents=True)
+    assert mcp_server.main(["--register-claude-desktop"]) == 0
+    out = capsys.readouterr().out
+    assert "eingetragen" in out and str(claude_home.store) in out
+    assert _read_json(claude_home.store)["mcpServers"]["Zeitspur"] == server_command()
+    assert cli.shown == []
+
+
+def test_cli_refuses_while_claude_desktop_runs(claude_home, cli, monkeypatch, capsys):
+    """Konsole: nichts schreiben, erklaeren, wie man Claude Desktop ganz beendet - und es nie selbst beenden."""
+    _write_json(claude_home.store, {"theme": "dark"})
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: True)
+    # 4 steht auch in installer/installer.iss (ClaudeDesktopRunningExitCode)
+    assert mcp_server.main(["--register-claude-desktop"]) == mcp_server.EXIT_CLAUDE_DESKTOP_RUNNING == 4
+    out = capsys.readouterr().out
+    assert "vollständig beenden" in out and "„Beenden“" in out and "erneut ausführen" in out
+    assert _read_json(claude_home.store) == {"theme": "dark"}
+    assert not claude_home.store.with_suffix(".json.bak").exists()
+
+
+def test_cli_quiet_for_installer(claude_home, cli, monkeypatch):
+    """Installer (--quiet, Fenster-Programm ohne Konsole): kein Meldungsfenster, nur der Rueckgabewert."""
+    monkeypatch.setattr("sys.stdout", None)
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: True)
+    assert mcp_server.main(["--register-claude-desktop", "--quiet"]) == 4
+    assert not claude_home.classic.exists()
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: False)
+    assert mcp_server.main(["--register-claude-desktop", "--quiet"]) == 0
+    assert _read_json(claude_home.classic)["mcpServers"]["Zeitspur"] == server_command()
+    assert cli.shown == []
+
+
+def test_cli_window_offers_retry(claude_home, cli, monkeypatch):
+    """Fenster-Programm: Hinweis mit "Wiederholen"; ist Claude Desktop danach beendet, wird eingetragen."""
+    monkeypatch.setattr("sys.stdout", None)
+    running = [True, False]
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: running.pop(0))
+    cli.answers = [mcp_server.IDRETRY]
+    assert mcp_server.main(["--register-claude-desktop"]) == 0
+    (hint, hint_flags), (done, _) = cli.shown
+    assert "„Beenden“" in hint and "„Wiederholen“" in hint and hint_flags == mcp_server.MB_RETRYCANCEL_WARNING
+    assert str(claude_home.classic) in done
+    assert _read_json(claude_home.classic)["mcpServers"]["Zeitspur"] == server_command()
+
+
+def test_cli_window_cancel_writes_nothing(claude_home, cli, monkeypatch):
+    monkeypatch.setattr("sys.stdout", None)
+    monkeypatch.setattr(mcp_server, "claude_desktop_running", lambda: True)
+    cli.answers = [2]   # IDCANCEL
+    assert mcp_server.main(["--register-claude-desktop"]) == 4
+    assert len(cli.shown) == 1 and not claude_home.classic.exists()
+
+
+def test_cli_reports_broken_config(claude_home, cli, capsys):
+    claude_home.classic.parent.mkdir(parents=True)
+    claude_home.classic.write_text("[1, 2]", encoding="utf-8")
+    assert mcp_server.main(["--register-claude-desktop"]) == 1
+    assert "kein JSON-Objekt" in capsys.readouterr().out
+    assert claude_home.classic.read_text(encoding="utf-8") == "[1, 2]"
+
+
+def test_print_config_names_the_file_claude_desktop_reads(claude_home, cli, capsys):
+    _write_json(claude_home.store, {})
+    assert mcp_server.main(["--print-config"]) == 0
+    out = capsys.readouterr().out
+    assert str(claude_home.store) in out and str(claude_home.classic) not in out
+    assert '"Zeitspur"' in out and "claude mcp add Zeitspur" in out and "vollständig beenden" in out
 
 
 def test_server_command_variants(monkeypatch, tmp_path):

@@ -59,8 +59,11 @@ Setup sie von Microsoft nach – mit eigener Fortschrittsseite und ebenfalls ohn
    * **Autostart** (vorausgewählt): legt den Wert `Zeitspur` unter
      `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` an, der `Zeitspur.exe --autostart` startet.
      Lässt sich jederzeit in der App umschalten (siehe [Automatisch mit Windows starten](#automatisch-mit-windows-starten)).
-   * **MCP-Server in Claude Desktop registrieren** (optional): ergänzt `%APPDATA%\Claude\claude_desktop_config.json`
-     um den Eintrag `Zeitspur` (Sicherungskopie `.bak`). Siehe auch [Claude anbinden](#claude-anbinden-mcp-server).
+   * **MCP-Server in Claude Desktop registrieren** (optional): trägt `Zeitspur` in die Konfigurationsdatei von
+     Claude Desktop ein (`claude_desktop_config.json`, Sicherungskopie `.bak`) – auch bei der Ausgabe aus dem
+     Microsoft Store, die ihre Datei im eigenen Paketordner liest. Claude Desktop muss dafür vollständig beendet
+     sein (Rechtsklick auf das Claude-Symbol im Infobereich → „Beenden“); läuft es noch, fragt das Setup nach und
+     bietet „Wiederholen“ an. Siehe auch [Claude anbinden](#claude-anbinden-mcp-server).
 3. Nach dem Setup startet Zeitspur: Sofort erscheint ein kleines Startfenster mit laufendem Balken (der erste
    Start dauert einige Sekunden), danach das Fenster mit der Ersteinrichtung.
 
@@ -201,13 +204,37 @@ Tray-Dienst; beide dürfen gleichzeitig laufen.
 > Dienst-EXE integriert wurde (Details unter „Entwicklung und Build“). Wer die separate EXE möchte, baut mit
 > `$env:ZEITSPUR_BUILD_MCP_EXE=1`; sie wird dann ebenfalls unterstützt.
 
-**Claude Desktop** – entweder die Setup-Option „MCP-Server in Claude Desktop registrieren“ wählen, später
+**Claude Desktop** – entweder die Setup-Option „MCP-Server in Claude Desktop registrieren“ wählen oder später
 
 ```bash
 "%LOCALAPPDATA%\Programs\Zeitspur\Zeitspur.exe" --mcp --register-claude-desktop
 ```
 
-ausführen oder `%APPDATA%\Claude\claude_desktop_config.json` von Hand ergänzen (Pfad anpassen):
+ausführen. **Claude Desktop muss dafür vollständig beendet sein.** Solange es läuft, hält es seine Einstellungen
+im Speicher und schreibt seine Konfigurationsdatei bei nächster Gelegenheit komplett neu – ein Eintrag, der in
+der Zwischenzeit hinzugekommen ist, verschwindet dann nach wenigen Minuten wieder. Das Fenster zu schließen
+genügt nicht, Claude Desktop läuft danach im Hintergrund weiter. Stattdessen mit der rechten Maustaste auf das
+Claude-Symbol im Infobereich der Taskleiste klicken und „Beenden“ wählen. Läuft Claude Desktop noch, trägt
+Zeitspur nichts ein: Setup und Meldungsfenster bitten darum, Claude Desktop zu beenden, und bieten „Wiederholen“
+an; in der Konsole endet der Befehl mit Rückgabewert 4 und lässt sich danach erneut ausführen. Zeitspur beendet
+Claude Desktop nie selbst.
+
+Welche Konfigurationsdatei Claude Desktop liest, hängt davon ab, wie es installiert wurde – Zeitspur findet sie
+selbst:
+
+| Claude Desktop installiert über | Konfigurationsdatei |
+|---|---|
+| Microsoft Store, WinGet oder MSIX-Paket (Programm unter `C:\Program Files\WindowsApps\Claude_…`) | `%LOCALAPPDATA%\Packages\Claude_<Kennung>\LocalCache\Roaming\Claude\claude_desktop_config.json` |
+| klassisches Setup (Programm unter `%LOCALAPPDATA%\AnthropicClaude\`) | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+Die Store-Ausgabe läuft in einem App-Container: Dateien, die sie unter `%APPDATA%` anlegt, legt Windows in
+Wirklichkeit in ihrem Paketordner ab – eine Datei unter `%APPDATA%\Claude` sieht sie dann gar nicht.
+`<Kennung>` steht für die Herausgeber-Kennung des Pakets (derzeit `pzs8sxrjxfjjc`). Zeitspur trägt sich in jede
+vorhandene Konfigurationsdatei ein und legt daneben jeweils eine Sicherungskopie `claude_desktop_config.json.bak`
+an. Gibt es noch keine, wird sie dort angelegt, wo die installierte Ausgabe liest.
+
+Wer die Datei lieber von Hand ergänzt (ebenfalls bei beendetem Claude Desktop, Pfad anpassen), trägt unter
+`mcpServers` ein:
 
 ```json
 {
@@ -220,7 +247,7 @@ ausführen oder `%APPDATA%\Claude\claude_desktop_config.json` von Hand ergänzen
 }
 ```
 
-Claude Desktop danach neu starten.
+Danach Claude Desktop wieder starten.
 
 **Claude Code** (PowerShell):
 
@@ -228,8 +255,9 @@ Claude Desktop danach neu starten.
 claude mcp add Zeitspur -- "$env:LOCALAPPDATA\Programs\Zeitspur\Zeitspur.exe" --mcp
 ```
 
-`Zeitspur.exe --mcp --print-config` zeigt beide Schnipsel mit dem tatsächlichen Pfad an
-(in einer Konsole ausführen; als Fenster-Programm öffnet es sonst ein Meldungsfenster).
+`Zeitspur.exe --mcp --print-config` zeigt beide Schnipsel mit dem tatsächlichen Pfad an, dazu die
+Konfigurationsdatei, die Claude Desktop auf diesem PC liest (in einer Konsole ausführen; als Fenster-Programm
+öffnet es sonst ein Meldungsfenster).
 
 Bereitgestellte Werkzeuge:
 
@@ -572,7 +600,8 @@ er, ob auch `%LOCALAPPDATA%\Zeitspur` (Datenbank, Schlüssel, Konfiguration, Pro
 **Standard: Nein**. Behalten Sie die Daten, werden sie bei einer Neuinstallation weiterverwendet.
 
 Der Eintrag in `claude_desktop_config.json` wird nicht automatisch entfernt (Datei gehört Claude Desktop);
-löschen Sie den Block `Zeitspur` bei Bedarf von Hand.
+löschen Sie den Block `Zeitspur` bei Bedarf von Hand – bei beendetem Claude Desktop und in der Datei, die Ihre
+Ausgabe von Claude Desktop liest (siehe [Claude anbinden](#claude-anbinden-mcp-server)).
 
 Haben Sie den Speicherort der Datenbank über die Einstellungen auf einen eigenen Ordner verlegt, löscht auch
 die Option „Daten löschen“ nur `%LOCALAPPDATA%\Zeitspur` (Schlüssel, Konfiguration, Protokolle). Die
@@ -589,7 +618,9 @@ gelöschten Schlüssel nicht mehr lesbar, belegt aber weiter Speicherplatz.
 | Dialog „Datenbank kann nicht geöffnet werden“ beim Start | Schlüssel passt nicht (Passwort-Reset, kopierte Dateien). „Zurücksetzen“ legt eine neue Datenbank an, alte Dateien erhalten das Suffix `.unreadable-<Zeit>` |
 | Tray zeigt „Inaktiv“ oder „Bildschirm gesperrt“ | gewollt: keine Aufnahme ohne Eingaben bzw. bei Sperre; `idle_pause_minutes` anpassen |
 | Tray zeigt „Zu wenig Speicherplatz“ | freien Platz schaffen oder `min_free_disk_gb` senken |
-| Claude findet den Server nicht | Pfad in der Konfiguration prüfen (`Zeitspur.exe --mcp --print-config`), Claude Desktop neu starten, `logs\mcp.log` ansehen |
+| Claude findet den Server nicht | Pfad in der Konfiguration prüfen (`Zeitspur.exe --mcp --print-config` zeigt auch, welche Datei Claude Desktop liest), Claude Desktop neu starten, `logs\mcp.log` ansehen |
+| Eintrag `Zeitspur` ist aus der Konfiguration von Claude Desktop wieder verschwunden | Claude Desktop lief beim Eintragen und hat die Datei mit seinem Stand im Speicher überschrieben. Claude Desktop ganz beenden (Rechtsklick auf das Claude-Symbol im Infobereich → „Beenden“), dann `Zeitspur.exe --mcp --register-claude-desktop` erneut ausführen |
+| Zeitspur steht in `%APPDATA%\Claude\claude_desktop_config.json`, Claude Desktop zeigt es trotzdem nicht | Claude Desktop aus dem Microsoft Store liest seine Datei aus dem Paketordner (siehe [Claude anbinden](#claude-anbinden-mcp-server)). Registrierung bei beendetem Claude Desktop erneut ausführen – Zeitspur findet die richtige Datei selbst |
 | `Zeitspur.exe --mcp` ohne Claude gestartet zeigt nur einen Hinweis | erwartet: der Server wird von Claude über stdio gestartet |
 | Virenscanner meldet die EXE | unsignierte PyInstaller-Programme sind ein bekannter Fehlalarm-Fall; Datei aus der Quarantäne holen bzw. Ausnahme durch die IT eintragen lassen; Ursache und Abhilfe (Code-Signatur) siehe Entwicklung |
 | Zwei Instanzen? | nicht möglich: ein zweiter Start zeigt nur das Fenster der laufenden Instanz |

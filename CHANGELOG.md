@@ -3,6 +3,11 @@
 Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zum Text
 „Was ist neu?“ in der App (tools/publish_release.ps1).
 
+## 0.3.2
+
+- Claude Desktop aus dem Microsoft Store: Die Registrierung findet die richtige Konfigurationsdatei und wartet,
+  bis Claude Desktop beendet ist – sonst würde es den Eintrag wieder überschreiben.
+
 ## 0.3.1
 
 - Erste öffentliche Version auf GitHub.

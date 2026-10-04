@@ -1,0 +1,13 @@
+# Laufzeit-Abhaengigkeiten (Python 3.13, Windows x64) - Versionen gepinnt
+sqlcipher3-wheels==0.5.7
+mss==10.2.0
+pywin32==312
+Pillow==12.3.0
+pywebview==6.2.1
+pythonnet==3.1.0
+pystray==0.19.5
+psutil==7.2.2
+PyYAML==6.0.3
+mcp==2.2.0
+cryptography==50.0.1
+truststore==0.10.4

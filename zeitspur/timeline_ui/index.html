@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zeitspur</title>
+<style>/*__LEAFLET_CSS__*/</style>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div id="app" class="app">
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><span>Zeitspur</span></div>
+    <div class="daynav" id="daynav">
+      <button id="prevDay" class="btn icon" title="Vorheriger Tag">&#9664;</button>
+      <input type="date" id="dayPicker" title="Datum wählen">
+      <button id="nextDay" class="btn icon" title="Nächster Tag">&#9654;</button>
+      <button id="todayBtn" class="btn">Heute</button>
+    </div>
+    <div class="search">
+      <input type="search" id="searchInput" placeholder="Volltextsuche in Bildschirmtext und Fenstertiteln …" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="statusbar">
+      <span id="statePill" class="pill">…</span>
+      <button id="pauseBtn" class="btn" title="Aufnahme pausieren oder fortsetzen">Pause</button>
+      <button id="mapBtn" class="btn" title="Karte der Aufenthalte und Fahrten dieses Tages" hidden>Karte</button>
+      <button id="settingsBtn" class="btn icon" title="Einstellungen">&#9881;</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+  <div id="updateBar" class="banner update" hidden>
+    <span id="updateText"></span>
+    <span class="update-actions">
+      <button id="updateNotesBtn" class="btn small" type="button">Was ist neu?</button>
+      <button id="updateBtn" class="btn small primary" type="button">Jetzt aktualisieren</button>
+    </span>
+    <div id="updateNotes" class="update-notes" hidden></div>
+  </div>
+
+  <main id="main">
+    <section id="timelineView" class="view">
+      <div class="meta" id="dayMeta"></div>
+      <div id="timeline" class="timeline">
+        <div id="axis" class="axis"></div>
+        <div id="lanes" class="lanes"></div>
+        <div id="nowMarker" class="now" hidden></div>
+        <div id="emptyHint" class="empty" hidden>Keine Aufnahmen an diesem Tag.</div>
+      </div>
+      <div class="hint">Mausrad: Zoom · Ziehen: Verschieben · Klick auf einen Block: Details · Doppelklick: ganzer Tag</div>
+
+      <section id="mapPanel" class="mappanel" hidden>
+        <div class="results-head">
+          <span id="mapTitle">Orte</span>
+          <button id="closeMap" class="btn small">Schließen</button>
+        </div>
+        <div id="mapCanvas" class="mapcanvas"></div>
+        <div class="hint" id="mapHint"></div>
+      </section>
+
+      <section id="results" class="results" hidden>
+        <div class="results-head">
+          <span id="resultsTitle"></span>
+          <button id="closeResults" class="btn small">Schließen</button>
+        </div>
+        <ul id="resultList"></ul>
+      </section>
+
+      <section id="detail" class="detail" hidden>
+        <div class="detail-image">
+          <img id="thumb" alt="Screenshot">
+          <div class="detail-nav">
+            <button id="prevEntry" class="btn small">&#9664; Vorheriges Bild</button>
+            <span id="entryPos" class="muted"></span>
+            <button id="nextEntry" class="btn small">Nächstes Bild &#9654;</button>
+          </div>
+        </div>
+        <div class="detail-text">
+          <h3 id="detailTitle"></h3>
+          <div id="detailMeta" class="detail-meta"></div>
+          <div class="ocr-head">Erkannter Text</div>
+          <pre id="ocrText" class="ocr"></pre>
+          <div class="detail-actions">
+            <button id="deleteEntry" class="btn danger small">Diesen Eintrag löschen</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="setupView" class="view setup" hidden>
+      <h2 id="setupTitle">Ersteinrichtung</h2>
+      <p class="version-line">
+        <span id="versionText" class="muted"></span>
+        <button id="checkUpdatesBtn" class="btn small" type="button" hidden>Nach Updates suchen</button>
+      </p>
+      <p id="setupIntro" class="muted"></p>
+      <form id="setupForm" class="form" novalidate>
+        <div id="formFields"></div>
+        <div id="formError" class="error" hidden></div>
+        <div class="form-actions">
+          <button type="submit" id="saveBtn" class="btn primary">Speichern und starten</button>
+          <button type="button" id="cancelBtn" class="btn" hidden>Abbrechen</button>
+          <span id="formNote" class="muted"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+</div>
+<script>/*__LEAFLET_JS__*/</script>
+<script>/*__JS__*/</script>
+</body>
+</html>

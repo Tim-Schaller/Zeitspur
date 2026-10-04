@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+build-release/
+dist-release/
+tools/downloads/
+tools/7zip/
+installer/tesseract-portable/
+installer/webview2/
+installer/Output/
+assets/*.ico
+.pytest_cache/
+*.log
+# entsteht nur im Release-Build (zeitspur.spec) - im Quelltext wuerde es den eigenen Build zum Release machen
+zeitspur/release_channel.txt
+# lokale Daten und Schluessel gehoeren nie ins Repo (liegen eigentlich in %LOCALAPPDATA%)
+*.db
+*.db-wal
+*.db-shm
+key.bin
+*.dpapi
+*.pem
+config.yaml

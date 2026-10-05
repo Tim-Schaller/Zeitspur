@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Tim-Schaller/Zeitspur/releases/latest"><b>Herunterladen</b></a> ·
-  <a href="https://timschaller-de.pages.dev/de/projects/zeitspur/">Projektseite</a> ·
+  <a href="https://www.timschaller.de/de/projects/zeitspur/">Projektseite</a> ·
   <a href="#screenshots">Screenshots</a> ·
   <a href="#plugins">Plugins</a> ·
   <a href="CHANGELOG.md">Änderungen</a>
@@ -57,6 +57,13 @@ ein Block je Programm und Fenster.
 
 ![Zeitstrahl mit Zeilen für Termine, Gespräche, Mails, Mitteilungen, Web, Entwicklung, PC, Orte und Bildschirm](docs/images/zeitstrahl.png)
 
+**Die Standort-Spur** in der Zeile „Orte“ führt GPS vom Handy, WLAN-Netze und die Ortung von Windows zu einer
+lückenlosen Leiste zusammen. Ein Klick öffnet den Tagesablauf mit Dauer, Entfernung und Quelle je Abschnitt;
+was nicht gemessen, sondern erschlossen ist – etwa die Nacht zu Hause ohne GPS-Punkte –, steht ausdrücklich dabei.
+Orte lassen sich dort direkt benennen (siehe [Standort-Spur](#standort-spur-wo-war-ich-wann)).
+
+![Tagesablauf der Orte: Zuhause, Autofahrt ins Büro, Fußweg zum Mittagessen und zurück ins Büro](docs/images/orte.png)
+
 **Ein Klick auf einen Block** zeigt den gespeicherten Screenshot, das Programm, den Zeitraum und den erkannten Text.
 Mit „Vorheriges“ und „Nächstes Bild“ blättern Sie durch den Block.
 
@@ -95,7 +102,9 @@ Thread und übergibt das Bild ausschließlich im Arbeitsspeicher an das mitgelie
 (stdin/stdout) – es liegt zu keinem Zeitpunkt eine unverschlüsselte Bild- oder Temp-Datei auf der Platte.
 
 Nicht aufgenommen wird bei gesperrtem Bildschirm, nach 3 Minuten ohne Maus-/Tastatureingaben, bei manueller
-Pause, bei zu wenig freiem Speicherplatz sowie wenn das Vordergrundfenster auf der Ausschlussliste steht.
+Pause, bei zu wenig freiem Speicherplatz sowie wenn das Vordergrundfenster auf der Ausschlussliste steht. Ist ein
+ausgeschlossenes Programm nur auf einem anderen Monitor zu sehen, bleibt dieser Monitor ausgespart (siehe
+[Konfiguration](#konfiguration)).
 
 ## Installation
 
@@ -172,12 +181,16 @@ Rechtsklick öffnet das Menü:
 | Mit Windows starten | schaltet den Autostart um (Häkchen = aktiv), sofort wirksam |
 | Log-Ordner öffnen | Explorer im Protokollordner |
 | Datenbank komprimieren | vollständiges VACUUM (nur nötig, wenn Sie Platz sofort zurückhaben wollen; das tägliche Aufräumen gibt Platz ohnehin frei) |
+| Nach Updates suchen | nur in der Release-Ausgabe: fragt sofort nach einer neuen Version (siehe [Updates](#updates)) |
 | Beenden | stoppt Aufnahme, OCR und Wartung, schließt die Datenbank sauber |
 
 **Zeitstrahl-Fenster**
 
-* Kopfzeile: Datum (◀ ▶, Kalender, „Heute“), Volltextsuche, Statusanzeige, Pause-Schalter, Einstellungen (⚙).
-* Zeitstrahl: 24-Stunden-Achse, je Monitor eine Spur. Aufeinanderfolgende Aufnahmen derselben App mit
+* Kopfzeile: Datum (◀ ▶, Kalender, „Heute“), Volltextsuche, Statusanzeige, Pause-Schalter, **Orte**
+  (Tagesablauf der [Standort-Spur](#standort-spur-wo-war-ich-wann); erscheint, sobald es Ortsdaten gibt oder die
+  Karte eingeschaltet ist), **Plugins** (Plugin-Browser) und Einstellungen (⚙).
+* Zeitstrahl: 24-Stunden-Achse. Oben stehen die Ereignisse der [Plugins](#plugins) in eigenen Zeilen, darunter
+  je Monitor eine Spur mit der Bildschirmaktivität. Aufeinanderfolgende Aufnahmen derselben App mit
   gleichem Fenstertitel bilden einen farbigen **Aktivitätsblock**. Beschriftet wird er mit dem
   **Fenstertitel** (was Sie getan haben), das Programm steht klein darunter.
   Die Farbe kennzeichnet das Programm und stammt aus **dessen eigenem Symbol** – Explorer gold,
@@ -227,22 +240,29 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `ocr_queue_max` | `20` | maximale Anzahl wartender OCR-Jobs im Speicher; Überschuss wird später nachgeholt |
 | `max_db_size_gb` | `20` | Größendeckel; darüber werden die ältesten Tage zuerst gelöscht |
 | `min_free_disk_gb` | `2` | unterhalb dieses freien Speichers pausiert die Aufnahme |
+| `backup_count` | `2` | so viele tägliche, verschlüsselte Sicherungen der Datenbank werden aufbewahrt (`0` = aus, siehe [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)) |
+| `backup_max_gb` | `5` | größere Datenbanken werden nicht gesichert (Platzbedarf) |
 | `log_level` | `INFO` | `DEBUG` protokolliert deutlich mehr (Neustart nötig) |
 | `installed_plugins` | `[]` | hinzugefügte Plugins (`outlook`, `teams`, `teams_local`, `wifi`, `dawarich`, `windows_location` …); verwaltet über Plugins (siehe Plugins) |
+| `plugin_settings` | `{}` | Einstellungen je Plugin (etwa die Ordner für Git oder die WLAN-Zuordnungen); verwaltet über den Plugin-Browser |
 | `teams_user_id` | `""` | Teams-Plugin: Azure-AD-Objekt-Id des Nutzers → nur **eigene** Anrufe (leer ⇒ Teams-Sync wird übersprungen) |
 | `teams_user_names` | `[]` | Teams-Plugin: Anzeigenamen als Rückfall, falls in einem Anruf keine Objekt-Id, aber ein Name steht |
-| `map_enabled` | `false` | Karte im Zeitstrahl; **einzige** Stelle, die Daten aus dem Internet lädt |
+| `map_enabled` | `false` | Karte im Tagesablauf der Orte; lädt dann Kartenkacheln aus dem Netz (siehe [Karte](#karte-openstreetmap)) |
 | `map_tile_url` | OSM | Kachel-Adresse (https, mit `{z}/{x}/{y}`); auf eigenen Server umbiegbar |
 | `map_home_lat` / `map_home_lon` | Mitte Deutschlands | Startpunkt der Karte, wenn nichts anzuzeigen ist |
 | `map_home_zoom` | `6` | Zoomstufe des Startpunkts (1–19) |
 | `map_home_label` | `""` | Name des Startpunkts (etwa „Büro“); mit Namen erscheint er als Bezugspunkt und zählt als bekannter Ort |
 | `known_places` | `[]` | weitere benannte Orte `Name;Breite;Länge[;Radius]`, je Zeile |
-| `events_sync_minutes` | `15` | Intervall der Termin-/Anruf-Synchronisierung |
+| `events_sync_minutes` | `15` | Intervall, in dem Plugins mit eigener Historie abgeglichen werden (Kalender, Mails, Teams …) |
 | `events_window_days` | `14` | Tage rückwärts/vorwärts, die synchronisiert werden (passt zur Aufbewahrung) |
+| `auto_update` | `true` | Release-Ausgabe: Updates selbst installieren; `false` zeigt nur einen Hinweis (siehe [Updates](#updates)) |
+| `update_idle_minutes` | `5` | so lange ohne Maus- und Tastatureingabe, bevor ein Update installiert wird |
 
-Die Ausschlusslisten prüfen nur das **Vordergrundfenster**. Ein Passwortmanager, der auf einem zweiten Monitor
-sichtbar ist, während Sie in einem anderen Programm arbeiten, wird trotzdem aufgenommen – nutzen Sie dafür die
-Pause oder „Letzte 15 Minuten löschen“.
+Die Ausschlusslisten gelten für **jedes sichtbare Fenster**, nicht nur für das vorderste. Steht ein
+ausgeschlossenes Programm im Vordergrund, pausiert die Aufnahme ganz. Ist es nur auf einem Monitor zu sehen –
+etwa der Passwortmanager auf dem zweiten Bildschirm, während Sie woanders arbeiten –, wird genau dieser Monitor
+ausgelassen. Vorsichtshalber zählt dabei auch ein Fenster, das hinter anderen liegt; nur minimierte Fenster und
+solche auf anderen virtuellen Desktops zählen nicht.
 
 ## Claude anbinden (MCP-Server)
 
@@ -322,11 +342,11 @@ Bereitgestellte Werkzeuge:
 | `list_active_apps(day)` | Tagesübersicht: welche Programme/Fenster wie lange aktiv waren |
 | `get_entry(entry_id)` | vollständiger Text und Metadaten eines Eintrags |
 | `get_screenshot(entry_id, max_width=1280)` | Screenshot als JPEG (im Speicher entschlüsselt) |
-| `get_activity_at(...)` → `location` | wo der Nutzer war (benannter Ort oder Koordinaten) – für „Wo war ich um 9 Uhr?“ |
-| `get_calendar(day)` | Outlook-Termine und Teams-Anrufe eines Tages (Betreff, Zeit, Dauer, Ort, Teilnehmer) |
+| `get_activity_at(...)` → `location` | der Abschnitt der [Standort-Spur](#standort-spur-wo-war-ich-wann) zum Zeitpunkt (Aufenthalt, Fahrt oder „Ort unbekannt“) – für „Wo war ich um 9 Uhr?“ |
+| `get_calendar(day)` | alle Ereignisse der Plugins an einem Tag: Termine, Gespräche, Mails, Mitteilungen, Surf-Phasen, Commits, PC-Zeiten, WLAN und die Standort-Spur – Zusatzangaben je Ereignis unter `details` |
 
-`get_activity_at` und `list_active_apps` enthalten die passenden Termine/Anrufe zusätzlich unter dem Schlüssel
-`calendar`, sodass Claude Bildschirmaktivität direkt einer Besprechung oder einem Anruf zuordnen kann.
+`get_activity_at` und `list_active_apps` enthalten die passenden Ereignisse zusätzlich unter dem Schlüssel
+`calendar`, sodass Claude Bildschirmaktivität direkt einer Besprechung, einem Anruf oder einer Mail zuordnen kann.
 
 Beispielfragen an Claude: „Was habe ich gestern um 12 Uhr gemacht?“, „Wann hatte ich zuletzt das Angebot für
 Kunde XY offen?“, „Welche Programme habe ich am Dienstag am längsten benutzt?“, „Zeig mir den Screenshot zu
@@ -376,8 +396,9 @@ ein Fenster von ±`events_window_days` um heute abgeglichen; beim Blättern in e
 wird dieser bei Bedarf nachgeladen. Plugins, die nur den Moment sehen (Gespräche, Mitteilungen), schreiben
 laufend mit.
 
-Zugangsdaten (Tokens, geheime Links) liegen DPAPI-geschützt im Datenordner unter `plugins\<id>.bin`, nie in der
-`config.yaml`; die Einstellungen der Plugins stehen dort unter `plugin_settings`. Online-Plugins sprechen nur
+Zugangsdaten (Tokens, geheime Links) liegen DPAPI-geschützt im Datenordner unter `plugins\<id>.bin` (Teams und
+Dawarich: `teams_credentials.bin` bzw. `dawarich_credentials.bin`), nie in der `config.yaml`; die Einstellungen
+der Plugins stehen dort unter `plugin_settings`. Online-Plugins sprechen nur
 `https` und prüfen Zertifikate immer; Zugangsdaten stehen nur im `Authorization`-Header, nie in Adressen,
 Protokollen oder Fehlermeldungen, und eine Weiterleitung auf einen anderen Server bekommt sie nicht mit.
 
@@ -595,9 +616,9 @@ So entsteht die Leiste:
   Fahrt verschwinden.
 
 Ein Klick auf die Leiste oder der Knopf **„Orte“** oben öffnet den **Tagesablauf**: chronologisch, mit Dauer,
-Entfernung und Quelle je Abschnitt, daneben (wenn eingeschaltet) die Karte. Dort lässt sich jeder Ort
-**benennen** – mit Koordinaten wird daraus ein bekannter Ort (Radius 150 m), ohne Koordinaten eine
-WLAN-Zuordnung. Das wirkt sofort und rückwirkend, auch für Claude.
+Entfernung und Quelle je Abschnitt, daneben (wenn eingeschaltet) die Karte – siehe [Screenshots](#screenshots).
+Dort lässt sich jeder Ort **benennen** – mit Koordinaten wird daraus ein bekannter Ort (Radius 150 m), ohne
+Koordinaten eine WLAN-Zuordnung. Das wirkt sofort und rückwirkend, auch für Claude.
 
 Claude bekommt die Leiste statt der einzelnen Belege: In `get_calendar` und im Feld `calendar` stehen
 Abschnitte mit `source: "standort"` und der Kategorie „Aufenthalt“, „Fahrt“ oder „Ort unbekannt“, unter
@@ -681,8 +702,9 @@ eingeschaltet ist, auch ohne Zeitspur.
 
 ### Karte (OpenStreetMap)
 
-**Standardmäßig aus – und das ist die einzige Stelle, an der Zeitspur Daten aus dem Internet holt.**
-Einschalten unter Einstellungen (⚙) → „Karte anzeigen (lädt Kacheln aus dem Netz)“.
+**Standardmäßig aus.** Neben den Online-Plugins, die Sie selbst hinzufügen, und der Update-Prüfung ist die Karte
+die einzige Stelle, an der Zeitspur Daten aus dem Internet holt. Einschalten unter Einstellungen (⚙) → „Karte
+anzeigen (lädt Kacheln aus dem Netz)“.
 
 Ist sie an, zeigt der Tagesablauf (Knopf **„Orte“**) neben der Liste eine Karte: Aufenthalte als Punkte in der
 Farbe ihrer Leiste, Fahrten als Linie, nicht aufgezeichnete Fahrten gestrichelt. Ein Klick auf einen Abschnitt
@@ -691,8 +713,8 @@ Farbe ihrer Leiste, Fahrten als Linie, nicht aufgezeichnete Fahrten gestrichelt.
 **Was das kostet, ehrlich gesagt:** Kartenkacheln werden pro Bildausschnitt von `tile.openstreetmap.org`
 geladen. Der Kachel-Server erfährt dadurch, **welche Gegenden Sie sich ansehen**. Ihre Aufenthalte selbst
 werden nicht übertragen – aber aus den abgerufenen Kacheln lässt sich ableiten, wohin Sie schauen. Deshalb
-ist die Karte abschaltbar und im Auslieferungszustand aus. Solange sie aus bleibt, gilt das Versprechen
-„alles bleibt auf dem Rechner“ unverändert.
+ist die Karte abschaltbar und im Auslieferungszustand aus. Solange sie aus bleibt, erfährt kein Kachel-Server
+etwas über Ihre Orte.
 
 Technisch:
 
@@ -761,6 +783,14 @@ gestern um 14 Uhr auf dem Bildschirm und gibt es dazu eine Plaud-Aufnahme?“.
   Einzeleinträge im Detailfenster löschen, automatische Löschung nach `retention_days`.
 * **Updates nur signiert:** Die Release-Ausgabe installiert nur Updates mit gültiger Signatur des Herausgebers
   und nur neuere Versionen (siehe [Updates](#updates)).
+* **Tägliche Sicherung:** Einmal am Tag schreibt Zeitspur eine Kopie der Datenbank nach
+  `backups\zeitspur-JJJJMMTT.db` neben der Datenbank – mit demselben Schlüssel verschlüsselt und auch bei laufender
+  Aufnahme in sich stimmig (`VACUUM INTO`). Aufbewahrt werden die jüngsten `backup_count` Stände (Standard 2).
+  Ist die Datenbank größer als `backup_max_gb` (Standard 5 GB) oder der Speicherplatz knapp, wird nicht gesichert.
+  Wird die Datenbankdatei einmal unlesbar, kostet das so höchstens einen Tag; gegen einen verlorenen Schlüssel
+  hilft die Sicherung dagegen nicht (siehe nächster Punkt). Zurückspielen: Zeitspur beenden,
+  `zeitspur.db` samt `-wal`/`-shm` beiseitelegen, die Sicherung als `zeitspur.db` an ihre Stelle kopieren und
+  Zeitspur starten.
 * **Wiederherstellbarkeit:** Wird das Windows-Passwort durch einen Administrator zurückgesetzt, kann DPAPI den
   Schlüssel nicht mehr entschlüsseln. Zeitspur bietet dann an, die Datenbank zurückzusetzen (alte Dateien
   werden umbenannt, nicht gelöscht).
@@ -791,6 +821,8 @@ entstehen nach der Duplikat-Erkennung grob 300–600 Bilder pro Stunde, also 6�
 Wer weniger Platz opfern möchte, senkt `max_image_width` (1280 ≈ halber Bedarf), `webp_quality` oder
 `retention_days`; `max_db_size_gb` begrenzt die Datei in jedem Fall. Gelöschter Platz wird täglich über
 inkrementelles Vacuum an das Dateisystem zurückgegeben; `tools\dbstat.py` (Quelltext) zeigt Größe und Statistik.
+Dazu kommen die täglichen Sicherungen: je Stand etwa die Größe der Datenbank, mit den Standardwerten also bis zu
+zwei weitere Kopien (bis 5 GB Datenbankgröße; `backup_count: 0` schaltet sie ab).
 
 ## Updates
 
@@ -821,7 +853,7 @@ Scheitert ein Update, läuft die bisherige Version weiter; dieselbe Version wird
 automatisch versucht. Das Protokoll des Setups liegt in `%LOCALAPPDATA%\Zeitspur\updates\`.
 
 Der selbst gebaute Programmstand (`build.ps1` ohne `-Release`) und der Quelltextbetrieb aktualisieren sich nie
-selbst – ein Release ersetzte dort sonst Funktionen, die er nicht enthält.
+selbst – ein Release würde dort sonst eigene Änderungen ungefragt überschreiben.
 
 ## Deinstallation
 
@@ -836,8 +868,8 @@ Ausgabe von Claude Desktop liest (siehe [Claude anbinden](#claude-anbinden-mcp-s
 
 Haben Sie den Speicherort der Datenbank über die Einstellungen auf einen eigenen Ordner verlegt, löscht auch
 die Option „Daten löschen“ nur `%LOCALAPPDATA%\Zeitspur` (Schlüssel, Konfiguration, Protokolle). Die
-verlegte `zeitspur.db` (samt `-wal`/`-shm`) am eigenen Ort müssen Sie dann selbst entfernen. Sie ist ohne den
-gelöschten Schlüssel nicht mehr lesbar, belegt aber weiter Speicherplatz.
+verlegte `zeitspur.db` (samt `-wal`/`-shm` und dem Ordner `backups` daneben) am eigenen Ort müssen Sie dann selbst
+entfernen. Sie ist ohne den gelöschten Schlüssel nicht mehr lesbar, belegt aber weiter Speicherplatz.
 
 ## Fehlerbehebung
 
@@ -928,24 +960,44 @@ Projektstruktur:
 
 ```
 zeitspur/
-  config.py        Konfiguration laden/validieren/speichern
-  crypto.py        DPAPI-Schluessel, SQLCipher-Verbindung mit allen Sicherheits-PRAGMAs
-  storage.py       Schema, Schreib-/Lesemethoden, FTS5-Suche, Wartung
-  capture.py       Screenshot-Loop, Aenderungserkennung, Leerlauf/Sperre, Ausschlusslisten
-  ocr.py           Tesseract ueber stdin/stdout (nur im Speicher)
-  ocr_worker.py    OCR-Warteschlange mit Nachholen aus der Datenbank
-  cleanup.py       Retention, Groessendeckel, inkrementelles Vacuum
-  app.py           Lebenszyklus (Threads, Fenster, Tray, Beenden)
-  tray.py          pystray-Menue und Zustandsfarben
-  splash.py        Startfenster mit Laufbalken, bis der Zeitstrahl geladen ist
-  timeline_ui/     Bridge (js_api) und die eingebettete HTML/CSS/JS-Oberflaeche
-  service_main.py  Einstieg Zeitspur.exe
-  mcp_server.py    MCP-Server (Zeitspur.exe --mcp, optional ZeitspurMCP.exe)
-tests/             pytest-Suite (Krypto, Storage, Frame-Diff, OCR, Cleanup, Bridge, MCP)
-installer/         installer.iss (Inno Setup), tesseract-portable/ (generiert)
-docs/images/       Logo, Titelbild und Screenshots fuer dieses README (Screenshots: tools\screenshots.py)
-zeitspur.spec   PyInstaller: zwei EXEs, gemeinsamer _internal-Ordner
+  config.py          Konfiguration laden/validieren/speichern
+  crypto.py          DPAPI-Schluessel, SQLCipher-Verbindung mit allen Sicherheits-PRAGMAs
+  storage.py         Schema, Schreib-/Lesemethoden, FTS5-Suche, Wartung
+  capture.py         Screenshot-Loop, Aenderungserkennung, Leerlauf/Sperre, Ausschlusslisten
+  ocr.py             Tesseract ueber stdin/stdout (nur im Speicher)
+  ocr_worker.py      OCR-Warteschlange mit Nachholen aus der Datenbank
+  cleanup.py         Retention, Groessendeckel, inkrementelles Vacuum, taegliche Sicherung
+  app.py             Lebenszyklus (Threads, Fenster, Tray, Beenden)
+  tray.py            pystray-Menue und Zustandsfarben
+  splash.py          Startfenster mit Laufbalken, bis der Zeitstrahl geladen ist
+  appicon.py         Blockfarben aus den Programmsymbolen
+  autostart.py       Autostart-Eintrag in der Registry
+  updater.py         Update-Pruefung, Download, Signaturpruefung, Installation
+  edition.py         erkennt, welche Funktionen im Paket stecken
+  winutil.py         Windows-Helfer (Fenster, Sperre, Leerlauf, Einzelinstanz, App-Container)
+  timeutil.py        Zeitangaben, Tagesgrenzen, Dauer
+  timeline_ui/       Bridge (js_api) und die eingebettete HTML/CSS/JS-Oberflaeche
+  service_main.py    Einstieg Zeitspur.exe
+  mcp_server.py      MCP-Server (Zeitspur.exe --mcp, optional ZeitspurMCP.exe)
+  plugins.py         Selbstbeschreibung aller Plugins (siehe unten)
+  events_sync.py     Abgleich der Plugins in die Tabelle calendar_events
+  location.py        Standort-Spur: fuehrt GPS, WLAN und Windows-Standort zusammen
+  outlook.py ...     die Plugins selbst (siehe unten)
+tests/               pytest-Suite
+installer/           installer.iss (Inno Setup), tesseract-portable/ (generiert)
+docs/images/         Logo, Titelbild und Screenshots fuer dieses README (Screenshots: tools\screenshots.py)
+zeitspur.spec        PyInstaller: Zeitspur.exe (optional ZeitspurMCP.exe), gemeinsamer _internal-Ordner
 ```
+
+**Plugins im Code:** `zeitspur/plugins.py` beschreibt alle Plugins (Registry, Kategorien, Zeilen im Zeitstrahl,
+Felder) und ist die einzige Stelle, an der ein neues eingetragen wird. `zeitspur/events_sync.py` gleicht Plugins
+mit Historie periodisch und bei Bedarf ab und gibt beobachtenden Plugins alle paar Sekunden Gelegenheit
+mitzuschreiben; alles landet in der Tabelle `calendar_events`. Gemeinsame Bausteine: `credentials.py`
+(DPAPI-geschützte Zugangsdaten je Plugin), `httpclient.py` (https-Zugang mit Zertifikatsprüfung, sicheren
+Weiterleitungen und Fehlermeldungen ohne Geheimnisse) und `eventlog.py` (Windows-Ereignisprotokolle). Die Quellen
+selbst: `outlook.py`, `outlook_mail.py`, `ics_calendar.py`, `teams.py`, `teams_local.py`, `calls_local.py`,
+`notifications.py`, `browser_history.py`, `git_commits.py`, `github_activity.py`, `pc_times.py`, `wifi.py`,
+`dawarich.py` und `windows_location.py`; `location.py` macht aus den Ortsquellen die Standort-Spur.
 
 Abweichungen zur ursprünglichen Spezifikation (mit Begründung): `sqlcipher3-wheels` statt `sqlcipher3-binary`
 (einziges Paket mit Wheels für Python 3.13), direkter Tesseract-Aufruf statt `pytesseract` (das intern
@@ -967,14 +1019,3 @@ Python (PSF), Tesseract OCR und die Sprachdaten `tessdata_fast` (Apache 2.0), SQ
 (PSF), MCP-SDK (MIT), cryptography (Apache 2.0 oder BSD-3), **pystray (LGPL-3.0)** – es liegt unverändert als
 eigene Dateien unter `_internal\pystray` und lässt sich dort ersetzen – sowie Leaflet (BSD-2,
 `zeitspur/timeline_ui/vendor/LICENSE-leaflet.txt`).
-
-## Projektmodule: Plugins
-
-`zeitspur/plugins.py` beschreibt alle Plugins (Registry, Kategorien, Zeilen im Zeitstrahl, Felder) und ist die
-einzige Stelle, an der ein neues eingetragen wird. `zeitspur/events_sync.py` gleicht Plugins mit Historie
-periodisch und bei Bedarf ab und gibt beobachtenden Plugins alle paar Sekunden Gelegenheit mitzuschreiben; alles
-landet in der Tabelle `calendar_events`. Gemeinsame Bausteine: `credentials.py` (DPAPI-geschützte Zugangsdaten je
-Plugin), `httpclient.py` (https-Zugang mit Zertifikatsprüfung, sicheren Weiterleitungen und Fehlermeldungen ohne
-Geheimnisse) und `eventlog.py` (Windows-Ereignisprotokolle). Die Quellen selbst: `outlook.py`, `outlook_mail.py`,
-`ics_calendar.py`, `teams.py`, `teams_local.py`, `calls_local.py`, `notifications.py`, `browser_history.py`,
-`git_commits.py`, `github_activity.py`, `pc_times.py`, `wifi.py` und `dawarich.py`.

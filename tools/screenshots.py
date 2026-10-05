@@ -37,7 +37,7 @@ def below_update_bar(img: Image.Image) -> int:
 # Ansicht -> (Dateiname, Fenstergroesse, Hoehe des Ausschnitts von oben: Zahl, Funktion oder None = ganzes Fenster)
 SHOTS = {"": ("zeitstrahl", SIZE, 488), "detail": ("details", (1440, 1080), None),
          "plugins": ("plugins", (1440, 1080), None), "setup": ("ersteinrichtung", (880, 900), None),
-         "update": ("update", SIZE, below_update_bar)}
+         "update": ("update", SIZE, below_update_bar), "orte": ("orte", (1440, 1080), 960)}
 
 
 def save_logo(out: Path = OUT / "logo.png", size: int = 512) -> Path:

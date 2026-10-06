@@ -94,7 +94,9 @@ auf GitHub.
 | Konfiguration | `%LOCALAPPDATA%\Zeitspur\config.yaml` | alle Einstellungen, siehe unten |
 | Protokolle | `%LOCALAPPDATA%\Zeitspur\logs\` | `service.log`, `mcp.log` (ohne Bildschirmtexte oder Fenstertitel) |
 
-Ablauf einer Aufnahme: alle *N* Sekunden (Standard 5) wird jeder Monitor fotografiert. Hat sich das Bild gegenüber
+Ablauf einer Aufnahme: alle *N* Sekunden (Standard 5) wird jeder Monitor fotografiert. Werden Monitore an- oder
+abgesteckt (etwa an der Dockingstation) oder ändert sich Auflösung oder Anordnung, nimmt Zeitspur ab der nächsten
+Runde die neuen Monitore auf – ohne Neustart. Hat sich das Bild gegenüber
 dem zuletzt gespeicherten Frame kaum verändert (Standard: weniger als 1,5 % der Bildpunkte), wird nur die Enddauer
 des laufenden Eintrags verlängert. Neue Frames werden verkleinert, als WebP komprimiert, verschlüsselt gespeichert
 und an eine OCR-Warteschlange übergeben. Die Texterkennung läuft mit niedriger Priorität in einem eigenen

@@ -52,6 +52,12 @@ def test_point_in_monitor_and_disk():
     assert winutil.free_disk_bytes(os.path.join(os.environ["LOCALAPPDATA"], "gibt", "es", "nicht")) > 0
 
 
+def test_monitor_layout_beschreibt_jeden_monitor():
+    layout = winutil.monitor_layout()
+    assert layout and all(len(r) == 4 and r[2] > r[0] and r[3] > r[1] for r in layout)
+    assert winutil.monitor_layout() == layout   # gleich, solange niemand um- oder absteckt
+
+
 def test_dpi_awareness_call_is_safe():
     assert isinstance(winutil.set_dpi_awareness(), bool)
 

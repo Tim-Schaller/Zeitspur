@@ -3,6 +3,11 @@
 Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zur Liste
 „Neu in Zeitspur …“ im Update-Hinweis der App (tools/publish_release.ps1; dort höchstens sechs Punkte).
 
+## 0.4.1
+
+- Mehrere Monitore: Zeitspur merkt sofort, wenn Monitore an- oder abgesteckt werden (etwa an der Dockingstation).
+  Bisher nahm es bis zum nächsten Neustart nur die Monitore auf, die beim Start angeschlossen waren.
+
 ## 0.4.0
 
 - Standort-Spur: Die Zeile „Orte“ zeigt den Tag als lückenlose Leiste – „08:20–16:40 Büro, 25 min Fahrt nach

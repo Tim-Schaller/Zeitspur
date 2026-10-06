@@ -319,3 +319,51 @@ def test_encode_webp_bleibt_schlank_und_lesbar():
     zurueck = Image.open(io.BytesIO(daten))
     assert zurueck.size == (1920, 1120) and zurueck.format == "WEBP"
     assert len(daten) < 1920 * 1120 * 3 // 20           # deutlich kleiner als roh
+
+
+def test_screenshots_lesen_die_monitore_nach_dem_andocken_neu_ein(storage, monkeypatch):
+    """mss merkt sich die Monitore beim Anlegen. Nach dem Andocken blieb es deshalb bis zum naechsten Programmstart
+    bei einem Monitor - aufgenommen wurde nur das Rechteck des Notebook-Bildschirms."""
+    import mss
+
+    from zeitspur import capture
+    from zeitspur.capture import OpenBlock
+
+    notebook = ((0, 0, 1920, 1200),)
+    docked = ((-1920, 0, 0, 1080), (2560, 0, 4480, 1080), (0, 0, 2560, 1440))
+    layout = {"now": notebook}
+    created = []
+
+    class FakeMss:
+        def __init__(self):
+            self.monitors = [{}] + [{"left": l, "top": t, "width": r - l, "height": b - t}
+                                    for l, t, r, b in layout["now"]]
+            self.closed = False
+            created.append(self)
+
+        def grab(self, mon):
+            return (mon["width"] // 40, mon["height"] // 40)   # nur die Groesse zaehlt
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(mss, "mss", FakeMss)
+    monkeypatch.setattr(capture, "shot_to_image", lambda size: Image.new("RGB", size))
+    monkeypatch.setattr(winutil, "monitor_layout", lambda: layout["now"])
+    loop = CaptureLoop(Config(), storage, None, threading.Event(), start_delay=0)
+
+    assert [m["width"] for _, m, _ in loop._screenshots()] == [1920]
+    assert len(loop._screenshots()) == 1 and len(created) == 1          # unveraendert: nicht neu anlegen
+    entry_id = storage.insert_entry(ts_start=1000, ts_end=1000, monitor_id=1, process_name="WINWORD.EXE",
+                                    window_title="Dokument", exe_path=None, width=8, height=8,
+                                    webp=encode_webp(Image.new("RGB", (8, 8)), 1920, 75)[0])
+    loop._blocks[1] = OpenBlock(entry_id, 1000, 5000, "WINWORD.EXE", "Dokument")
+
+    layout["now"] = docked                                              # Dockingstation: drei Monitore
+    frames = loop._screenshots()
+    assert [(i, m["left"], m["width"]) for i, m, _ in frames] == [(1, -1920, 1920), (2, 2560, 1920), (3, 0, 2560)]
+    assert len(created) == 2 and created[0].closed
+    assert loop._blocks == {}                                           # Monitor 1 ist jetzt ein anderer Bildschirm
+
+    layout["now"] = notebook                                            # abgedockt: nichts Schwarzes weiter aufnehmen
+    assert len(loop._screenshots()) == 1 and len(created) == 3 and created[1].closed

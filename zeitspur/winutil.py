@@ -468,6 +468,19 @@ def visible_windows_per_monitor(monitors: list[dict]) -> dict[int, list[WindowIn
     return result
 
 
+def monitor_layout() -> tuple[tuple[int, int, int, int], ...]:
+    """Lage aller Monitore (links, oben, rechts, unten) in der Reihenfolge, in der Windows sie meldet - wie mss.
+
+    Aendert sich beim An- und Abstecken (Dockingstation), bei Aufloesung, Skalierung oder Anordnung. Kostet nur
+    einen Systemaufruf und laesst sich deshalb vor jeder Aufnahme pruefen."""
+    if not IS_WINDOWS:
+        return ()
+    try:
+        return tuple(tuple(int(v) for v in rect) for _monitor, _dc, rect in win32api.EnumDisplayMonitors(None, None))
+    except pywintypes.error:
+        return ()
+
+
 def point_in_monitor(point: tuple[int, int], monitor: dict) -> bool:
     x, y = point
     return (monitor["left"] <= x < monitor["left"] + monitor["width"]

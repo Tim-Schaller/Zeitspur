@@ -167,6 +167,7 @@ class CaptureLoop(threading.Thread):
         self._last_flush = time.monotonic()
         self._last_error_log = 0.0
         self._sct = None
+        self._layout: tuple = ()   # Monitor-Anordnung, mit der self._sct angelegt wurde
         self._process_patterns = cfg.process_patterns()
         self._title_patterns = cfg.title_patterns()
         self._lock = threading.Lock()
@@ -221,13 +222,16 @@ class CaptureLoop(threading.Thread):
     def _finish(self) -> None:
         self.flush_extends()
         self._close_blocks()
+        self._close_screens()
+        self._set_state(CaptureState.STOPPED)
+
+    def _close_screens(self) -> None:
         if self._sct is not None:
             try:
                 self._sct.close()
             except Exception:
                 pass
             self._sct = None
-        self._set_state(CaptureState.STOPPED)
 
     def tick(self) -> None:
         now_ms = timeutil.now_ms()
@@ -268,8 +272,16 @@ class CaptureLoop(threading.Thread):
         import mss
         import mss.exception
 
+        layout = winutil.monitor_layout()
+        if self._sct is not None and layout != self._layout:
+            # mss liest die Monitore nur beim Anlegen ein. Ohne Neuanlegen fehlten nach dem Andocken die neuen
+            # Monitore bis zum naechsten Programmstart, und abgesteckte wuerden schwarz weiter aufgenommen.
+            log.info("Monitore geaendert (%d statt %d) - Aufnahme liest sie neu ein", len(layout), len(self._layout))
+            self._close_screens()
+            self._close_blocks()   # die Nummern gehoeren jetzt womoeglich zu anderen Bildschirmen
         if self._sct is None:
             self._sct = mss.mss()
+            self._layout = layout
         try:
             monitors = self._sct.monitors[1:] or self._sct.monitors[:1]
             result = []
@@ -278,11 +290,7 @@ class CaptureLoop(threading.Thread):
                 result.append((idx, mon, shot_to_image(shot)))
             return result
         except mss.exception.ScreenShotError as e:
-            try:
-                self._sct.close()
-            except Exception:
-                pass
-            self._sct = None
+            self._close_screens()
             raise RuntimeError(f"Screenshot fehlgeschlagen: {e}") from e
 
     def _window_for(self, mon: dict, fg: winutil.WindowInfo | None,

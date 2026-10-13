@@ -235,11 +235,13 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `excluded_process_regex` | `KeePass.*`, `.*Banking.*` | Prozessnamen (Regex, Groß-/Kleinschreibung egal), bei denen nicht aufgenommen wird |
 | `excluded_title_regex` | `.*Inkognito.*`, `.*Private Browsing.*`, `.*InPrivate.*`, `.*Privates Fenster.*` | Fenstertitel-Muster, bei denen nicht aufgenommen wird |
 | `ocr_language` | `deu+eng` | Tesseract-Sprachen (Neustart nötig; Sprachdateien liegen in `tesseract\tessdata`) |
-| `change_threshold` | `0.015` | Anteil geänderter Bildpunkte, ab dem ein Frame als neu gilt (0.01 = 1 %) |
+| `change_threshold` | `0.025` | Anteil geänderter Bildpunkte, ab dem ein Frame als neu gilt (0.01 = 1 %) |
 | `max_block_minutes` | `10` | spätestens danach wird auch ohne Änderung ein neues Bild gespeichert |
 | `ocr_psm` | `3` | Tesseract-Seitensegmentierung (3 automatisch, 11 verstreuter Text; Neustart nötig) |
 | `ocr_min_confidence` | `40` | Wörter mit geringerer Konfidenz (%) werden verworfen (Neustart nötig) |
 | `ocr_queue_max` | `20` | maximale Anzahl wartender OCR-Jobs im Speicher; Überschuss wird später nachgeholt |
+| `ocr_throttle` | `2` | nach jedem OCR-Job so viele Male dessen Dauer pausieren; begrenzt die Dauerlast auf etwa ein Drittel eines Kerns (`0` = ungedrosselt; Neustart nötig) |
+| `ocr_pause_on_battery` | `true` | im Akkubetrieb keine Texterkennung; sie wird nachgeholt, sobald das Netzteil wieder dran ist (Neustart nötig) |
 | `max_db_size_gb` | `20` | Größendeckel; darüber werden die ältesten Tage zuerst gelöscht |
 | `min_free_disk_gb` | `2` | unterhalb dieses freien Speichers pausiert die Aufnahme |
 | `backup_count` | `2` | so viele tägliche, verschlüsselte Sicherungen der Datenbank werden aufbewahrt (`0` = aus, siehe [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)) |

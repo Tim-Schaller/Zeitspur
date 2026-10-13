@@ -3,6 +3,14 @@
 Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zur Liste
 „Neu in Zeitspur …“ im Update-Hinweis der App (tools/publish_release.ps1; dort höchstens sechs Punkte).
 
+## 0.4.2
+
+- Texterkennung schont den PC: Nach jedem Bild legt Zeitspur eine Pause ein, sodass die Erkennung dauerhaft nur noch
+  etwa ein Drittel eines Prozessorkerns belegt (Einstellung `ocr_throttle`). Im Akkubetrieb ruht sie ganz und
+  wird nachgeholt, sobald das Netzteil wieder dran ist (`ocr_pause_on_battery`).
+- Zeitstrahl: Weniger fast gleiche Bilder – ein neues Bild wird jetzt erst bei 2,5 % geänderten Bildpunkten gespeichert
+  (`change_threshold`, bisher 1,5 %). Eine eigene Einstellung in der `config.yaml` bleibt unverändert.
+
 ## 0.4.1
 
 - Mehrere Monitore: Zeitspur merkt sofort, wenn Monitore an- oder abgesteckt werden (etwa an der Dockingstation).

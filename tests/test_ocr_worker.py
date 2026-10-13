@@ -98,3 +98,34 @@ def test_full_queue_drops_and_stop_kills(storage):
     assert worker.dropped == 1 and worker.pending() == 1
     worker.stop()
     assert engine.killed
+
+
+def test_throttle_pauses_between_jobs(storage):
+    ids = [make_entry(storage, ts_start=T0 + i) for i in range(2)]
+    engine = FakeEngine(delay=0.2)
+    worker, stop = run_worker(storage, engine, maxsize=5, backlog_enabled=False, throttle=2.0)
+    started = time.monotonic()
+    try:
+        for i in ids:
+            assert worker.submit(i, b"png")
+        assert wait_for(lambda: worker.processed == 2)
+        # 2 x 0,2 s Arbeit + Pause von 2 x 0,4 s nach dem ersten Job (die zweite folgt erst danach)
+        assert time.monotonic() - started >= 0.2 + 0.4 + 0.2
+    finally:
+        stop.set()
+
+
+def test_pause_on_battery_holds_jobs_back(storage, monkeypatch):
+    on_battery = {"value": True}
+    monkeypatch.setattr(ocr_worker.winutil, "on_battery", lambda: on_battery["value"])
+    monkeypatch.setattr(ocr_worker, "BATTERY_CHECK_INTERVAL", 0.05)
+    entry_id = make_entry(storage, ts_start=T0)
+    worker, stop = run_worker(storage, FakeEngine(), maxsize=5, backlog_enabled=False, pause_on_battery=True)
+    try:
+        assert worker.submit(entry_id, b"png")
+        time.sleep(0.4)
+        assert worker.processed == 0
+        on_battery["value"] = False
+        assert wait_for(lambda: worker.processed == 1)
+    finally:
+        stop.set()

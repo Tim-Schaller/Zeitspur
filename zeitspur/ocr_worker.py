@@ -23,18 +23,22 @@ log = logging.getLogger(__name__)
 
 BACKLOG_INTERVAL = 5.0       # Sekunden zwischen zwei Nachhol-Versuchen bei leerer Queue
 BACKLOG_MIN_AGE_MS = 20_000  # frische Eintraege stecken evtl. noch in der Queue eines anderen Pfads
+BATTERY_CHECK_INTERVAL = 15.0  # Sekunden zwischen zwei Pruefungen, ob das Netzteil wieder dran ist
+MAX_COOLDOWN = 60.0          # Obergrenze der Drosselpause (z. B. nach einem Timeout)
 
 
 class OcrWorker(threading.Thread):
     def __init__(self, engine: TesseractEngine, storage: Storage, stop_event: threading.Event, *,
                  maxsize: int = 20, on_result: Callable[[int, OcrResult], None] | None = None,
-                 backlog_enabled: bool = True):
+                 backlog_enabled: bool = True, throttle: float = 0.0, pause_on_battery: bool = False):
         super().__init__(name="ocr", daemon=True)
         self.engine = engine
         self.storage = storage
         self.stop_event = stop_event
         self.on_result = on_result
         self.backlog_enabled = backlog_enabled
+        self.throttle = max(0.0, float(throttle))
+        self.pause_on_battery = pause_on_battery
         self._queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=maxsize)
         self._inflight: set[int] = set()
         self._inflight_lock = threading.Lock()
@@ -64,6 +68,10 @@ class OcrWorker(threading.Thread):
         # auf die Sparkerne zwingen und jede Seite in den Timeout laufen lassen (siehe winutil).
         winutil.set_thread_low_priority()
         while not self.stop_event.is_set():
+            if self.pause_on_battery and winutil.on_battery():
+                # Nichts abholen: die Queue laeuft voll, Ueberschuss holt der Nachhol-Pfad spaeter aus der DB nach.
+                self.stop_event.wait(BATTERY_CHECK_INTERVAL)
+                continue
             try:
                 entry_id, png = self._queue.get(timeout=1.0)
             except queue.Empty:
@@ -110,6 +118,15 @@ class OcrWorker(threading.Thread):
             return  # pro Intervall nur ein Nachhol-Job, um die CPU-Last flach zu halten
 
     def _process(self, entry_id: int, png: bytes) -> None:
+        started = time.monotonic()
+        try:
+            self._recognize_and_store(entry_id, png)
+        finally:
+            # Drosselung: Pause proportional zur Dauer begrenzt die Dauerlast auf 1/(1+throttle) eines Kerns.
+            if self.throttle > 0:
+                self.stop_event.wait(min((time.monotonic() - started) * self.throttle, MAX_COOLDOWN))
+
+    def _recognize_and_store(self, entry_id: int, png: bytes) -> None:
         started = time.monotonic()
         try:
             result = self.engine.recognize(png)

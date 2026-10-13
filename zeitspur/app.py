@@ -30,7 +30,8 @@ from .tray import TrayIcon
 
 log = logging.getLogger(__name__)
 
-RESTART_REQUIRED_FIELDS = {"db_path", "ocr_language", "ocr_psm", "ocr_min_confidence", "ocr_queue_max", "log_level"}
+RESTART_REQUIRED_FIELDS = {"db_path", "ocr_language", "ocr_psm", "ocr_min_confidence", "ocr_queue_max", "ocr_throttle",
+                           "ocr_pause_on_battery", "log_level"}
 MB_YESNO, MB_ICONERROR, MB_ICONWARNING, IDYES = 0x4, 0x10, 0x30, 6
 REVEAL_TIMEOUT_S = 45.0   # spaetestens dann erscheint das Fenster, auch wenn seine Seite nicht laedt
 
@@ -292,7 +293,8 @@ class App:
             if missing:
                 log.warning("Tesseract-Sprachdaten fehlen: %s", ", ".join(missing))
             log.info("OCR: %s (%s)", self.engine.version() or "tesseract", cfg.ocr_language)
-            self.ocr_worker = OcrWorker(self.engine, storage, self.stop_event, maxsize=cfg.ocr_queue_max)
+            self.ocr_worker = OcrWorker(self.engine, storage, self.stop_event, maxsize=cfg.ocr_queue_max,
+                                       throttle=cfg.ocr_throttle, pause_on_battery=cfg.ocr_pause_on_battery)
             self.ocr_worker.start()
         else:
             log.error("tesseract.exe nicht gefunden - Aufnahme laeuft ohne Texterkennung")

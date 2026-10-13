@@ -103,6 +103,25 @@ def idle_seconds() -> float:
     return ((now - info.dwTime) & 0xFFFFFFFF) / 1000.0
 
 
+class _SYSTEM_POWER_STATUS(ctypes.Structure):
+    _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                ("BatteryLifeTime", wt.DWORD), ("BatteryFullLifeTime", wt.DWORD)]
+
+
+def on_battery() -> bool:
+    """True, wenn der PC im Akkubetrieb laeuft (Netzteil getrennt). Bei Unklarheit False."""
+    if not IS_WINDOWS:
+        return False
+    status = _SYSTEM_POWER_STATUS()
+    try:
+        if not _kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+            return False
+    except Exception:
+        return False
+    return status.ACLineStatus == 0   # 1 = Netz, 255 = unbekannt
+
+
 def free_disk_bytes(path: Path) -> int:
     p = Path(path)
     while not p.exists() and p.parent != p:

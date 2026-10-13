@@ -40,11 +40,13 @@ class Config:
     excluded_title_regex: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDED_TITLES))
     ocr_language: str = "deu+eng"
     # --- Ergaenzungen ---
-    change_threshold: float = 0.015      # Anteil geaenderter Pixel, ab dem ein Frame als neu gilt
+    change_threshold: float = 0.025    # Anteil geaenderter Pixel, ab dem ein Frame als neu gilt
     max_block_minutes: int = 10          # spaetestens danach wird ein neuer Keyframe gespeichert
     ocr_psm: int = 3                     # Tesseract page segmentation mode (3 = auto, 11 = sparse text)
     ocr_min_confidence: int = 40         # Woerter mit geringerer Konfidenz werden verworfen
     ocr_queue_max: int = 20              # maximale Anzahl wartender OCR-Jobs im Speicher
+    ocr_throttle: float = 2.0            # nach jedem OCR-Job so viele Male dessen Dauer pausieren (0 = ungedrosselt)
+    ocr_pause_on_battery: bool = True    # im Akkubetrieb keine OCR; wird nachgeholt, sobald das Netzteil dran ist
     max_db_size_gb: float = 20.0         # aelteste Tage werden geloescht, wenn die DB groesser wird
     min_free_disk_gb: float = 2.0        # Aufnahme pausiert, wenn weniger frei ist
     backup_count: int = 2                 # taegliche Sicherungen der Datenbank (0 = aus)
@@ -109,6 +111,9 @@ class Config:
         _check_range(self, "ocr_psm", 0, 13)
         _check_range(self, "ocr_min_confidence", 0, 100)
         _check_range(self, "ocr_queue_max", 1, 500)
+        _check_range(self, "ocr_throttle", 0.0, 50.0)
+        if not isinstance(self.ocr_pause_on_battery, bool):
+            raise ConfigError("ocr_pause_on_battery muss true oder false sein")
         _check_range(self, "max_db_size_gb", 0.1, 10000.0)
         _check_range(self, "min_free_disk_gb", 0.0, 10000.0)
         _check_range(self, "events_sync_minutes", 1, 1440)

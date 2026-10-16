@@ -170,6 +170,12 @@ def _rec(rid, org_id, start="2026-09-09T10:00:00Z", end="2026-09-09T10:05:00Z"):
             "organizer_v2": {"identity": {"user": {"id": org_id, "displayName": org_id}}}}
 
 
+def _recent_day():
+    """Ein Tag innerhalb des 30-Tage-Fensters von fetch - feste Daten fallen sonst mit der Zeit heraus."""
+    from datetime import date, timedelta
+    return date.today() - timedelta(days=1)
+
+
 def test_fetch_filters_to_user_and_caches(monkeypatch):
     client = teams.TeamsCallRecords({"tenant_id": "t", "client_id": "c", "client_secret": "s"})
     client._token = "tok"
@@ -184,14 +190,14 @@ def test_fetch_filters_to_user_and_caches(monkeypatch):
     monkeypatch.setattr(client, "_expand_participants", lambda ext: calls.append(ext) or expand[ext])
     checked = {}
     matcher = UserMatcher(user_id="TIM")
-    events = client.fetch(__import__("datetime").date(2026, 9, 9), __import__("datetime").date(2026, 9, 9),
-                          matcher=matcher, checked=checked)
+    day = _recent_day()
+    events = client.fetch(day, day, matcher=matcher, checked=checked)
     dirs = {e.ext_id: __import__("json").loads(e.extra)["direction"] for e in events}
     assert dirs == {"r1": "outgoing", "r2": "incoming"}          # r3 (nicht Tim) verworfen
     assert checked == {"r1": True, "r2": True, "r3": False}      # Klassifizierung gecacht
     # zweiter Lauf mit gefuelltem Cache: r3 wird nicht erneut expandiert
     calls.clear()
-    client.fetch(__import__("datetime").date(2026, 9, 9), __import__("datetime").date(2026, 9, 9), matcher=matcher, checked=checked)
+    client.fetch(day, day, matcher=matcher, checked=checked)
     assert "r3" not in calls   # r3 aus Cache als False -> keine erneute Abfrage
 
 
@@ -199,5 +205,6 @@ def test_fetch_without_matcher_returns_all(monkeypatch):
     client = teams.TeamsCallRecords({"tenant_id": "t", "client_id": "c", "client_secret": "s"})
     client._token = "tok"
     monkeypatch.setattr(client, "_get", lambda url: {"value": [_rec("r1", "TIM"), _rec("r2", "BOB")]})
-    events = client.fetch(__import__("datetime").date(2026, 9, 9), __import__("datetime").date(2026, 9, 9))
+    day = _recent_day()
+    events = client.fetch(day, day)
     assert len(events) == 2  # ohne Matcher: unveraendert alle (Rueckwaertskompatibilitaet)

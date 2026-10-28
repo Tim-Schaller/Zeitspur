@@ -307,6 +307,7 @@
       if (!keepView) { state.selected = null; $("detail").hidden = true; state.placeSel = null; }
       render();
       renderPlacesPanel();
+      renderExportTitle();   // nach Mitternacht laeuft der Tag nicht mehr
     } catch (e) {
       showBanner("Tag konnte nicht geladen werden: " + errMessage(e), true);
     }
@@ -315,7 +316,47 @@
     state.date = iso;
     state.selected = null;
     $("detail").hidden = true;
+    $("exportNote").textContent = "";   // die Rueckmeldung gehoerte zum vorigen Tag
+    renderExportTitle();
     return loadDay(keepView);
+  }
+
+  // ------------------------------------------------------------------ Export
+  function renderExportTitle() {
+    if (!state.date) return;
+    const running = state.date === todayIso();
+    $("exportTitle").textContent = `Export: ${weekday(state.date)}, ${fmtDate(state.date)}`
+      + (running ? " – Stand jetzt, der Tag läuft noch" : "");
+  }
+  function toggleExport() {
+    const panel = $("exportPanel");
+    if (!panel.hidden) { panel.hidden = true; return; }
+    renderExportTitle();
+    $("exportNote").textContent = "";
+    panel.hidden = false;
+    panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function fmtBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
+  }
+  async function runExport(target) {
+    const note = $("exportNote");
+    const buttons = [$("exportCopy"), $("exportSave")];
+    buttons.forEach((b) => { b.disabled = true; });
+    note.textContent = "Wird erstellt …";
+    try {
+      const res = await state.api.export_day(state.date, $("exportText").checked, target);
+      if (res.cancelled) note.textContent = "";
+      else note.textContent = (target === "file" ? `Gespeichert: ${res.path}` : "In die Zwischenablage kopiert")
+        + ` (${fmtBytes(res.bytes)})`;
+    } catch (e) {
+      note.textContent = "";
+      showBanner("Export fehlgeschlagen: " + errMessage(e), true);
+    } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+    }
   }
 
   // ------------------------------------------------------------------ Rendering
@@ -1469,6 +1510,10 @@
     $("prevDay").addEventListener("click", () => setDate(addDays(state.date, -1)));
     $("nextDay").addEventListener("click", () => setDate(addDays(state.date, 1)));
     $("todayBtn").addEventListener("click", () => setDate(todayIso()));
+    $("exportBtn").addEventListener("click", toggleExport);
+    $("closeExport").addEventListener("click", () => { $("exportPanel").hidden = true; });
+    $("exportCopy").addEventListener("click", () => runExport("clipboard"));
+    $("exportSave").addEventListener("click", () => runExport("file"));
     $("dayPicker").addEventListener("change", (e) => { if (e.target.value) setDate(e.target.value); });
     $("searchInput").addEventListener("input", onSearchInput);
     $("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(state.searchTimer); runSearch(); } if (e.key === "Escape") { e.target.value = ""; onSearchInput(); } });

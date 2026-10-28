@@ -351,6 +351,12 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .pl-hint { flex-basis: 100%; color: var(--muted); }
 .pl-hint.error { color: var(--danger); }
 .mappanel .hint { padding: 6px 10px 8px; margin: 0; }
+.exportpanel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); margin-top: 10px; }
+.export-body { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.export-body p { margin: 0; }
+.export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#exportNote { font-size: 13px; overflow-wrap: anywhere; }
+.exportpanel .hint { padding: 0 12px 10px; margin: 0; }
 .leaflet-container { font: inherit; background: var(--panel-2); }
 .leaflet-container a { color: var(--accent); }
 .map-tip { white-space: pre; }   /* Zeilen wie gewollt, sonst kein Umbruch */

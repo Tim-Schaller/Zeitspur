@@ -209,6 +209,28 @@ def apps_use_dark_theme() -> bool:
         return False   # Wert fehlt: Windows nimmt hell an
 
 
+def set_clipboard_text(text: str, attempts: int = 10) -> None:
+    """Text in die Zwischenablage. Haelt gerade ein anderes Programm sie offen, kurz warten und erneut versuchen."""
+    import time
+
+    import win32clipboard
+
+    for attempt in range(attempts):
+        try:
+            win32clipboard.OpenClipboard()
+        except pywintypes.error:
+            if attempt == attempts - 1:
+                raise RuntimeError("Die Zwischenablage ist gerade von einem anderen Programm belegt.") from None
+            time.sleep(0.05)
+            continue
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        finally:
+            win32clipboard.CloseClipboard()
+        return
+
+
 # --------------------------------------------------------------------------- App-Container (MSIX)
 
 _FILE_SHARE_ALL = 0x07

@@ -20,6 +20,7 @@
       <input type="date" id="dayPicker" title="Datum wählen">
       <button id="nextDay" class="btn icon" title="Nächster Tag">&#9654;</button>
       <button id="todayBtn" class="btn">Heute</button>
+      <button id="exportBtn" class="btn" title="Diesen Tag als Text exportieren – auch den laufenden">Export</button>
     </div>
     <div class="search">
       <input type="search" id="searchInput" placeholder="Volltextsuche in Bildschirmtext und Fenstertiteln …" autocomplete="off" spellcheck="false">
@@ -67,6 +68,23 @@
           <div id="mapCanvas" class="mapcanvas"></div>
         </div>
         <div class="hint" id="mapHint"></div>
+      </section>
+
+      <section id="exportPanel" class="exportpanel" hidden>
+        <div class="results-head">
+          <span id="exportTitle">Export</span>
+          <button id="closeExport" class="btn small">Schließen</button>
+        </div>
+        <div class="export-body">
+          <p class="muted">Der Tag als Markdown-Text: Orte, Termine und andere Ereignisse, Programme und der Ablauf je Monitor – etwa zum Einfügen in einen KI-Chat.</p>
+          <label class="check"><input type="checkbox" id="exportText"> Erkannten Bildschirmtext mitnehmen (deutlich größer)</label>
+          <div class="export-actions">
+            <button id="exportCopy" class="btn primary" type="button">In die Zwischenablage</button>
+            <button id="exportSave" class="btn" type="button">Als Datei speichern …</button>
+            <span id="exportNote" class="muted"></span>
+          </div>
+        </div>
+        <div class="hint">Der Export ist nicht verschlüsselt. Beim laufenden Tag enthält er den Stand bis jetzt.</div>
       </section>
 
       <section id="results" class="results" hidden>

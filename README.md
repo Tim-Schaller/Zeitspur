@@ -188,9 +188,12 @@ Rechtsklick öffnet das Menü:
 
 **Zeitstrahl-Fenster**
 
-* Kopfzeile: Datum (◀ ▶, Kalender, „Heute“), Volltextsuche, Statusanzeige, Pause-Schalter, **Orte**
+* Kopfzeile: Datum (◀ ▶, Kalender, „Heute“, **Export**), Volltextsuche, Statusanzeige, Pause-Schalter, **Orte**
   (Tagesablauf der [Standort-Spur](#standort-spur-wo-war-ich-wann); erscheint, sobald es Ortsdaten gibt oder die
   Karte eingeschaltet ist), **Plugins** (Plugin-Browser) und Einstellungen (⚙).
+* **Export**: der gezeigte Tag als Markdown-Text – Orte, Termine und andere Ereignisse, Programme und der Ablauf je
+  Monitor, auf Wunsch mit dem erkannten Bildschirmtext. In die Zwischenablage oder als `.md`-Datei, etwa für einen
+  KI-Chat ohne MCP-Anbindung. Beim laufenden Tag enthält er den Stand bis jetzt. Der Export ist nicht verschlüsselt.
 * Zeitstrahl: 24-Stunden-Achse. Oben stehen die Ereignisse der [Plugins](#plugins) in eigenen Zeilen, darunter
   je Monitor eine Spur mit der Bildschirmaktivität. Aufeinanderfolgende Aufnahmen derselben App mit
   gleichem Fenstertitel bilden einen farbigen **Aktivitätsblock**. Beschriftet wird er mit dem

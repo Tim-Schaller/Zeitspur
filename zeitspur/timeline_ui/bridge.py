@@ -465,6 +465,42 @@ class Bridge:
             out.append(r)
         return out
 
+    # ---------------------------------------------------------------- Export
+    def export_day(self, day: str, include_text: Any = False, target: str = "clipboard") -> dict[str, Any]:
+        """Knopf "Export": der Tag (auch der laufende) als Markdown in die Zwischenablage oder in eine Datei.
+
+        Der Text bleibt auf der Python-Seite - die Seite bekommt nur Groesse und Pfad zurueck.
+        """
+        from .. import day_export, winutil
+
+        d = timeutil.parse_date(day)
+        text = day_export.build_markdown(self._store(), d, self._app.cfg, include_text=_as_bool(include_text))
+        size = len(text.encode("utf-8"))
+        if target == "file":
+            path = self._ask_save_path(day_export.file_name(d))
+            if path is None:
+                return {"ok": False, "cancelled": True}
+            path.write_text(text, encoding="utf-8", newline="\n")
+            return {"ok": True, "path": str(path), "bytes": size}
+        winutil.set_clipboard_text(text)
+        return {"ok": True, "bytes": size}
+
+    def _ask_save_path(self, suggested: str) -> Path | None:
+        window = self._app.window
+        if window is None:
+            raise RuntimeError("Das Zeitspur-Fenster ist nicht verfügbar.")
+        import webview
+
+        downloads = Path.home() / "Downloads"
+        result = window.create_file_dialog(webview.FileDialog.SAVE,
+                                           directory=str(downloads if downloads.exists() else Path.home()),
+                                           save_filename=suggested,
+                                           file_types=("Markdown (*.md)", "Alle Dateien (*.*)"))
+        if not result:
+            return None
+        path = Path(result[0] if isinstance(result, (list, tuple)) else str(result))
+        return path if path.suffix else path.with_suffix(".md")
+
     # ---------------------------------------------------------------- Aktionen
     def set_paused(self, paused: bool) -> dict[str, Any]:
         self._app.set_paused(bool(paused))

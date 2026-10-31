@@ -20,11 +20,13 @@ class FakeOutlook:
     def __init__(self, events, available=True):
         self._events = events
         self._available = available
+        self.launch_calls = []
 
     def available(self):
         return self._available
 
-    def fetch(self, start, end):
+    def fetch(self, start, end, *, launch=False):
+        self.launch_calls.append(launch)
         return self._events
 
 
@@ -130,13 +132,59 @@ def test_outlook_error_does_not_wipe_cached_events(storage, monkeypatch):
     assert sync.sync_range(DAY, DAY).counts == {"outlook": 1}
 
     class RaisingOutlook(FakeOutlook):
-        def fetch(self, s, e):
+        def fetch(self, s, e, *, launch=False):
             raise OutlookError("COM momentan nicht erreichbar")
     use_outlook(monkeypatch, RaisingOutlook([]))
     report = sync.sync_range(DAY, DAY)
     assert report.total == 0 and any("Outlook" in x for x in report.errors)
     # entscheidend: der vorhandene Termin bleibt erhalten (kein replace_events mit leerer Liste)
     assert len(storage.events_between(T(0), T(23, 59))) == 1
+
+
+def test_outlook_wird_standardmaessig_nicht_gestartet(storage, monkeypatch):
+    fake = FakeOutlook(make_events())
+    use_outlook(monkeypatch, fake)
+    EventSync(Config(installed_plugins=["outlook"]), storage).sync_range(DAY, DAY)
+    assert fake.launch_calls == [False]
+
+
+def test_outlook_starten_laesst_sich_einschalten(storage, monkeypatch):
+    fake = FakeOutlook(make_events())
+    use_outlook(monkeypatch, fake)
+    cfg = Config(installed_plugins=["outlook"], plugin_settings={"outlook": {"launch": True}})
+    EventSync(cfg, storage).sync_range(DAY, DAY)
+    assert fake.launch_calls == [True]
+
+
+def test_geschlossenes_outlook_ist_kein_fehler_und_behaelt_den_cache(storage, monkeypatch, caplog):
+    from zeitspur.outlook import OutlookNotRunning
+    sync = EventSync(Config(installed_plugins=["outlook"]), storage)
+    use_outlook(monkeypatch, FakeOutlook(make_events()))
+    assert sync.sync_range(DAY, DAY).counts == {"outlook": 1}
+
+    class ClosedOutlook(FakeOutlook):
+        def fetch(self, s, e, *, launch=False):
+            raise OutlookNotRunning("Das klassische Outlook läuft gerade nicht.")
+    use_outlook(monkeypatch, ClosedOutlook([]))
+    with caplog.at_level("WARNING"):
+        report = sync.sync_range(DAY, DAY)
+    assert report.counts == {} and report.errors == []   # still uebersprungen, alle 15 min keine Warnung
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(storage.events_between(T(0), T(23, 59))) == 1   # zwischengespeicherter Termin bleibt
+
+
+def test_outlook_mails_bei_geschlossenem_outlook_uebersprungen(storage, monkeypatch):
+    from zeitspur.outlook import OutlookNotRunning
+    calls = []
+
+    class ClosedMail:
+        def fetch(self, start, end, *, sent, received, launch):
+            calls.append(launch)
+            raise OutlookNotRunning("Das klassische Outlook läuft gerade nicht.")
+    monkeypatch.setattr("zeitspur.outlook_mail.OutlookMail", ClosedMail)
+    monkeypatch.setattr(OutlookCalendar, "available", staticmethod(lambda: True))
+    report = EventSync(Config(installed_plugins=["outlook_mail"]), storage).sync_range(DAY, DAY)
+    assert calls == [False] and report.counts == {} and report.errors == []
 
 
 # --------------------------------------------------------------------------- Teams

@@ -66,6 +66,9 @@ class EventSync:
                 if plugin.id not in self.cfg.installed_plugins:
                     continue   # waehrend des Abrufs entfernt - seine Daten sind geloescht und bleiben es
                 report.counts[plugin.id] = self.storage.replace_events(plugin.id, window_start, window_end, rows)
+            except plugins.PluginSkip as e:
+                # Diesmal nichts abzuholen (z. B. Outlook geschlossen): kein Fehler, Zwischenspeicher bleibt.
+                log.debug("%s: uebersprungen: %s", plugin.name, e)
             except plugin.expected_errors() as e:
                 # Ein Plugin, dessen Dienst gerade nicht erreichbar ist, darf die anderen nicht aufhalten.
                 log.warning("%s: Sync fehlgeschlagen: %s", plugin.name, e)

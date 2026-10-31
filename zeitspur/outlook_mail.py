@@ -2,7 +2,8 @@
 
 Gelesen werden nur Betreff, Absender bzw. Empfaenger und Uhrzeit aus "Gesendete Elemente" und dem Posteingang -
 nie der Mailtext oder Anhaenge. Wie beim Kalender (outlook.py): Faellt COM aus, wird ein OutlookError GEWORFEN,
-damit der Abgleich die zwischengespeicherten Mails nicht als "keine Mails" loescht.
+damit der Abgleich die zwischengespeicherten Mails nicht als "keine Mails" loescht. Ebenso: standardmaessig nur
+an ein laufendes Outlook anhaengen, sonst OutlookNotRunning.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 
-from .outlook import OutlookError, _com_datetime_to_ms
+from .outlook import OutlookError, _com_datetime_to_ms, connect
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +47,8 @@ def _restrict_date(dt: datetime) -> str:
 class OutlookMail:
     """Liest Mails aus dem klassischen Outlook. Instanzen sind an einen Thread gebunden (COM-Apartment)."""
 
-    def fetch(self, start: date, end: date, *, sent: bool = True, received: bool = True) -> list[dict]:
+    def fetch(self, start: date, end: date, *, sent: bool = True, received: bool = True,
+              launch: bool = False) -> list[dict]:
         if sys.platform != "win32":
             return []
         try:
@@ -59,8 +61,9 @@ class OutlookMail:
         window_end = datetime(end.year, end.month, end.day) + timedelta(days=1)
         lo, hi = int(window_start.timestamp() * 1000), int(window_end.timestamp() * 1000)
         pythoncom.CoInitialize()
+        namespace = None
         try:
-            namespace = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            namespace = connect(win32com.client, launch).GetNamespace("MAPI")
             rows: list[dict] = []
             for wanted, folder_id, field, kind in ((sent, OL_FOLDER_SENT, "SentOn", "sent"),
                                                    (received, OL_FOLDER_INBOX, "ReceivedTime", "received")):
@@ -69,12 +72,14 @@ class OutlookMail:
                                              window_end, lo, hi))
             log.info("Outlook-Mails: %d fuer %s..%s gelesen", len(rows), start, end)
             return rows
-        except OutlookError:
+        except OutlookError:   # auch OutlookNotRunning
             raise
         except Exception as e:  # pywintypes.com_error u. a. -> WERFEN, nicht []
             log.warning("Outlook-Mails konnten nicht gelesen werden: %s", e)
+            e.with_traceback(None)   # der Traceback hielte Frames samt COM-Verweisen fest
             raise OutlookError(str(e)) from e
         finally:
+            namespace = None  # noqa: F841 - COM-Verweis vor CoUninitialize freigeben (siehe outlook.py)
             pythoncom.CoUninitialize()
 
     def _folder(self, folder, field: str, kind: str, window_start: datetime, window_end: datetime,

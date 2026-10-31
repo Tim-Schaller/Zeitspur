@@ -3,6 +3,11 @@
 Nutzt den bereits angemeldeten Outlook-Desktop-Client, es ist keine zusaetzliche Authentifizierung noetig.
 Alle Zugriffe sind lesend. Faellt COM aus (kein klassisches Outlook, kein Profil), liefert fetch() eine
 leere Liste und available() False - Zeitspur laeuft dann ohne Kalender weiter.
+
+Standardmaessig haengt sich Zeitspur nur an ein bereits laufendes Outlook an (launch=False). Ein per COM
+gestartetes Outlook ist ein voller, unsichtbarer Outlook-Prozess, der bei jedem Abgleich das Postfach
+synchronisiert und Protokolle schreibt - alle 15 Minuten ist das teuer. Laeuft Outlook nicht, wirft fetch()
+OutlookNotRunning; das ist kein Fehler, der Zwischenspeicher bleibt einfach stehen.
 """
 from __future__ import annotations
 
@@ -18,6 +23,7 @@ log = logging.getLogger(__name__)
 
 SOURCE = "outlook"
 OL_FOLDER_CALENDAR = 9
+MK_E_UNAVAILABLE = -2147221021   # 0x800401E3: Objekt nicht in der Running Object Table (Outlook laeuft nicht)
 # Puffer fuer die untere Restrict-Grenze: faengt Termine, die bis zu so viele Tage vor dem Fenster
 # begannen und in dieses hineinreichen (mehrtaegige/ganztaegige Termine).
 LONG_EVENT_BUFFER_DAYS = 62
@@ -85,6 +91,25 @@ class OutlookError(Exception):
     pass
 
 
+class OutlookNotRunning(OutlookError):
+    """Das klassische Outlook laeuft gerade nicht, und es darf nicht gestartet werden."""
+
+
+def connect(com_client, launch: bool = False):
+    """Outlook.Application holen. launch=False: nur an ein laufendes Outlook anhaengen, nie eins starten.
+
+    com_client ist win32com.client (als Parameter, damit sich das ohne COM testen laesst).
+    """
+    if launch:
+        return com_client.Dispatch("Outlook.Application")
+    try:
+        return com_client.GetActiveObject("Outlook.Application")
+    except Exception as e:  # pywintypes.com_error
+        if getattr(e, "hresult", None) == MK_E_UNAVAILABLE:
+            raise OutlookNotRunning("Das klassische Outlook läuft gerade nicht.") from None
+        raise
+
+
 class OutlookCalendar:
     """Liest Termine aus dem klassischen Outlook. Instanzen sind an einen Thread gebunden (COM-Apartment)."""
 
@@ -109,12 +134,13 @@ class OutlookCalendar:
         except OSError:
             return False
 
-    def fetch(self, start: date, end: date) -> list[CalendarEvent]:
+    def fetch(self, start: date, end: date, *, launch: bool = False) -> list[CalendarEvent]:
         """Termine, die den Tagesbereich [start, end] (lokal, end inklusive) ueberlappen.
 
         Leere Liste heisst "keine Termine". Bei einem COM-/Zugriffsfehler wird eine OutlookError GEWORFEN -
         das ist wichtig, weil der Aufrufer sonst eine leere Liste als "keine Termine" interpretiert und ueber
-        replace_events die zwischengespeicherten Termine loeschen wuerde.
+        replace_events die zwischengespeicherten Termine loeschen wuerde. Laeuft Outlook nicht und ist
+        launch False, kommt OutlookNotRunning.
         """
         self._last_error = None
         if sys.platform != "win32":
@@ -133,8 +159,9 @@ class OutlookCalendar:
         # werden. Der praezise Ueberlappungsfilter sitzt anschliessend in _collect.
         restrict_start = window_start - timedelta(days=LONG_EVENT_BUFFER_DAYS)
         pythoncom.CoInitialize()
+        app = namespace = calendar = items = restricted = None
         try:
-            app = win32com.client.Dispatch("Outlook.Application")
+            app = connect(win32com.client, launch)
             namespace = app.GetNamespace("MAPI")
             calendar = namespace.GetDefaultFolder(OL_FOLDER_CALENDAR)
             items = calendar.Items
@@ -153,11 +180,18 @@ class OutlookCalendar:
             events = self._collect(restricted, timeutil.to_ms(window_start), timeutil.to_ms(window_end))
             log.info("Outlook: %d Termine fuer %s..%s gelesen", len(events), start, end)
             return events
+        except OutlookNotRunning:
+            raise
         except Exception as e:  # pywintypes.com_error u. a. -> WERFEN, nicht [] (siehe Docstring)
             self._last_error = str(e)
             log.warning("Outlook-Kalender konnte nicht gelesen werden: %s", e)
+            e.with_traceback(None)   # der Traceback hielte Frames samt COM-Verweisen fest
             raise OutlookError(self._last_error) from e
         finally:
+            # Alle COM-Verweise VOR CoUninitialize freigeben. Wurden sie erst danach abgeraeumt, blieb ein
+            # gestartetes Outlook mitunter unsichtbar haengen, und jeder weitere Start scheiterte mit
+            # "Starten des Servers fehlgeschlagen".
+            app = namespace = calendar = items = restricted = None  # noqa: F841
             pythoncom.CoUninitialize()
 
     def _collect(self, restricted, window_start_ms: int, window_end_ms: int) -> list[CalendarEvent]:

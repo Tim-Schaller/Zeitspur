@@ -115,6 +115,11 @@ class PluginError(Exception):
     """Erwartbarer Fehler eines Plugins (Dienst nicht erreichbar, Zugang abgelehnt): Warnung ohne Stacktrace."""
 
 
+class PluginSkip(Exception):
+    """Diesmal gibt es nichts abzuholen (z. B. das Programm laeuft gerade nicht). Kein Fehler: keine Warnung,
+    und die zwischengespeicherten Ereignisse bleiben unangetastet."""
+
+
 class EventPlugin:
     """Basisklasse. Ein Plugin liefert Ereignisse (Zeilen fuer calendar_events) fuer einen Zeitraum."""
 
@@ -268,13 +273,27 @@ class EventPlugin:
 
 # =========================================================================== Kalender & Mail
 
+# Beide Outlook-Plugins: Ein per COM gestartetes Outlook synchronisiert bei jedem Abgleich das ganze Postfach
+# und schreibt Protokolle - deshalb standardmaessig nur lesen, solange Outlook ohnehin offen ist.
+OUTLOOK_LAUNCH = Field(
+    "launch", "Outlook dafür im Hintergrund starten", kind="bool", default=False, optional=True,
+    help="Aus: Zeitspur liest nur, solange das klassische Outlook ohnehin geöffnet ist. An: Zeitspur startet "
+         "Outlook bei jedem Abgleich unsichtbar – das kostet jedes Mal Rechenzeit und einen Postfach-Abgleich.")
+
+
+def _outlook_test_message(launch: bool) -> str:
+    if launch:
+        return "Outlook ist erreichbar und wird für den Abgleich bei Bedarf im Hintergrund gestartet."
+    return "Outlook ist erreichbar. Gelesen wird, solange das klassische Outlook geöffnet ist."
+
+
 class OutlookPlugin(EventPlugin):
     id = "outlook"
     name = "Outlook-Kalender"
     summary = "Termine aus dem klassischen Outlook – ohne Anmeldung."
     description = ("Termine aus dem klassischen Outlook (Desktop-Programm) als Marker im Zeitstrahl. "
-                   "Keine Anmeldung nötig. Das neue Outlook bietet diese Schnittstelle nicht an – dafür gibt es "
-                   "das Plugin „Kalender per ICS-Link“.")
+                   "Keine Anmeldung nötig. Gelesen wird, solange Outlook geöffnet ist. Das neue Outlook bietet "
+                   "diese Schnittstelle nicht an – dafür gibt es das Plugin „Kalender per ICS-Link“.")
     category = "Kalender & Mail"
     icon = "📅"
     lane = "Termine"
@@ -282,7 +301,9 @@ class OutlookPlugin(EventPlugin):
     color = "#3a6ea5"
     records = "Betreff, Beginn und Ende, Ort, Organisator und Teilnehmer Ihrer Termine (±14 Tage)."
     setup_steps = ("Das klassische Outlook muss installiert und eingerichtet sein.",
-                   "Plugin hinzufügen – fertig. Die Termine erscheinen nach dem nächsten Abgleich.")
+                   "Plugin hinzufügen – fertig. Die Termine erscheinen beim nächsten Abgleich, während Outlook "
+                   "geöffnet ist.")
+    setting_fields = (OUTLOOK_LAUNCH,)
 
     def __init__(self) -> None:
         self._calendar = None
@@ -303,10 +324,15 @@ class OutlookPlugin(EventPlugin):
 
     def test_connection(self, cfg: "Config") -> str:
         reason = self.unavailable_reason()
-        return reason or "Outlook ist erreichbar."
+        return reason or _outlook_test_message(bool(self.settings(cfg).get("launch")))
 
     def fetch(self, ctx: SyncContext, start: date, end: date) -> list[dict]:
-        return [e.as_row() for e in self._cal().fetch(start, end)]
+        from .outlook import OutlookNotRunning
+        try:
+            events = self._cal().fetch(start, end, launch=bool(self.settings(ctx.cfg).get("launch")))
+        except OutlookNotRunning as e:
+            raise PluginSkip(str(e)) from None
+        return [e.as_row() for e in events]
 
 
 class IcsCalendarPlugin(EventPlugin):
@@ -363,8 +389,8 @@ class OutlookMailPlugin(EventPlugin):
     name = "Outlook-Mails"
     summary = "Gesendete und empfangene Mails: Betreff, Absender, Zeit – kein Inhalt."
     description = ("Zeigt, wann Sie welche Mails geschrieben und bekommen haben – aus dem klassischen Outlook, "
-                   "ohne Anmeldung. Gespeichert werden Betreff, Absender bzw. Empfänger und Uhrzeit, nie der "
-                   "Mailtext oder Anhänge.")
+                   "ohne Anmeldung, solange es geöffnet ist. Gespeichert werden Betreff, Absender bzw. Empfänger "
+                   "und Uhrzeit, nie der Mailtext oder Anhänge.")
     category = "Kalender & Mail"
     icon = "✉️"
     lane = "Mails"
@@ -377,6 +403,7 @@ class OutlookMailPlugin(EventPlugin):
     setting_fields = (
         Field("sent", "Gesendete Mails", kind="bool", default=True, optional=True),
         Field("received", "Empfangene Mails (Posteingang)", kind="bool", default=True, optional=True),
+        OUTLOOK_LAUNCH,
     )
 
     def expected_errors(self) -> tuple[type[Exception], ...]:
@@ -394,12 +421,17 @@ class OutlookMailPlugin(EventPlugin):
         return None
 
     def test_connection(self, cfg: "Config") -> str:
-        return self.unavailable_reason() or "Outlook ist erreichbar."
+        return self.unavailable_reason() or _outlook_test_message(bool(self.settings(cfg).get("launch")))
 
     def fetch(self, ctx: SyncContext, start: date, end: date) -> list[dict]:
+        from .outlook import OutlookNotRunning
         from .outlook_mail import OutlookMail
         s = self.settings(ctx.cfg)
-        return OutlookMail().fetch(start, end, sent=bool(s.get("sent")), received=bool(s.get("received")))
+        try:
+            return OutlookMail().fetch(start, end, sent=bool(s.get("sent")), received=bool(s.get("received")),
+                                       launch=bool(s.get("launch")))
+        except OutlookNotRunning as e:
+            raise PluginSkip(str(e)) from None
 
 
 # =========================================================================== Gespraeche & Meetings

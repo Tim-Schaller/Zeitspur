@@ -20,6 +20,9 @@ zeitspur/release_channel.txt
 *.db-wal
 *.db-shm
 key.bin
+*_credentials.bin
 *.dpapi
 *.pem
 config.yaml
+# Registry-Sicherungen und -Exporte enthalten Einstellungen dieses PCs
+*.reg

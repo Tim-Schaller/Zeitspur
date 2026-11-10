@@ -104,9 +104,9 @@ Thread und übergibt das Bild ausschließlich im Arbeitsspeicher an das mitgelie
 (stdin/stdout) – es liegt zu keinem Zeitpunkt eine unverschlüsselte Bild- oder Temp-Datei auf der Platte.
 
 Nicht aufgenommen wird bei gesperrtem Bildschirm, nach 3 Minuten ohne Maus-/Tastatureingaben, bei manueller
-Pause, bei zu wenig freiem Speicherplatz sowie wenn das Vordergrundfenster auf der Ausschlussliste steht. Ist ein
-ausgeschlossenes Programm nur auf einem anderen Monitor zu sehen, bleibt dieser Monitor ausgespart (siehe
-[Konfiguration](#konfiguration)).
+Pause und bei zu wenig freiem Speicherplatz. Fenster auf der Ausschlussliste – etwa private Browserfenster oder der
+Passwortmanager – werden im Bild geschwärzt, bevor es gespeichert oder an die Texterkennung geht, und ihr Titel wird
+nicht gespeichert; der Rest des Bildschirms wird weiter aufgenommen (siehe [Konfiguration](#konfiguration)).
 
 ## Installation
 
@@ -166,7 +166,7 @@ Start automatisch.
 ## Bedienung: Tray-Menü und Zeitstrahl
 
 **Tray-Symbol**: ein Ring („Zeitachse“) mit Aufnahmepunkt. Die **Farbe zeigt den Zustand** (grün Aufnahme, gelb
-pausiert, grau gesperrt/inaktiv, blau ausgeschlossene App, rot Fehler/kein Speicherplatz), und **während der
+pausiert, grau gesperrt/inaktiv, rot Fehler/kein Speicherplatz), und **während der
 Aufnahme läuft das helle Ringsegment um** – steht es still, wird gerade nichts aufgezeichnet. In jedem anderen
 Zustand bleibt das Symbol bewusst ruhig. Die Einzelbilder sind vorberechnet und werden in genau der Größe
 gezeichnet, in der Windows das Symbol anzeigt; die Animation kostet keine messbare Rechenzeit.
@@ -235,8 +235,8 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `max_image_width` | `1920` | Screenshots werden auf diese Breite verkleinert (640–7680) |
 | `webp_quality` | `75` | WebP-Qualität (30–95) |
 | `db_path` | `%LOCALAPPDATA%/Zeitspur/zeitspur.db` | Speicherort der Datenbank (Neustart nötig) |
-| `excluded_process_regex` | `KeePass.*`, `.*Banking.*` | Prozessnamen (Regex, Groß-/Kleinschreibung egal), bei denen nicht aufgenommen wird |
-| `excluded_title_regex` | `.*Inkognito.*`, `.*Private Browsing.*`, `.*InPrivate.*`, `.*Privates Fenster.*` | Fenstertitel-Muster, bei denen nicht aufgenommen wird |
+| `excluded_process_regex` | `KeePass.*`, `.*Banking.*` | Prozessnamen (Regex, Groß-/Kleinschreibung egal), deren Fenster geschwärzt werden |
+| `excluded_title_regex` | `.*Inkognito.*`, `.*Private Browsing.*`, `.*InPrivate.*`, `.*Privates Fenster.*` | Fenstertitel-Muster, deren Fenster geschwärzt werden |
 | `ocr_language` | `deu+eng` | Tesseract-Sprachen (Neustart nötig; Sprachdateien liegen in `tesseract\tessdata`) |
 | `change_threshold` | `0.025` | Anteil geänderter Bildpunkte, ab dem ein Frame als neu gilt (0.01 = 1 %) |
 | `max_block_minutes` | `10` | spätestens danach wird auch ohne Änderung ein neues Bild gespeichert |
@@ -265,11 +265,16 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `auto_update` | `true` | Release-Ausgabe: Updates selbst installieren; `false` zeigt nur einen Hinweis (siehe [Updates](#updates)) |
 | `update_idle_minutes` | `5` | so lange ohne Maus- und Tastatureingabe, bevor ein Update installiert wird |
 
-Die Ausschlusslisten gelten für **jedes sichtbare Fenster**, nicht nur für das vorderste. Steht ein
-ausgeschlossenes Programm im Vordergrund, pausiert die Aufnahme ganz. Ist es nur auf einem Monitor zu sehen –
-etwa der Passwortmanager auf dem zweiten Bildschirm, während Sie woanders arbeiten –, wird genau dieser Monitor
-ausgelassen. Vorsichtshalber zählt dabei auch ein Fenster, das hinter anderen liegt; nur minimierte Fenster und
-solche auf anderen virtuellen Desktops zählen nicht.
+Die Ausschlusslisten gelten für **jedes sichtbare Fenster**, nicht nur für das vorderste. Zeitspur schwärzt solche
+Fenster im Bild – samt ihrer Menüs, Vorschlagslisten und Dialoge – und nimmt den Rest des Bildschirms weiter auf;
+als Titel wird nur „Ausgeschlossenes Fenster“ gespeichert, der Programmname bleibt sichtbar. Liegt ein solches
+Fenster hinter anderen, wird geschwärzt, was davon hervorschaut. Als Abdeckung zählen dabei nur Fenster, die sicher
+undurchsichtig sind – durchscheinende Overlays, Flyouts und Acryl-Fenster nicht –, und an deren Rand bleibt
+vorsichtshalber ein schmaler Streifen schwarz. Minimierte Fenster und solche auf anderen virtuellen Desktops sind
+nicht zu sehen und zählen nicht. Nicht geschwärzt werden Fenstertitel in der Taskleiste (falls dort Beschriftungen
+eingeschaltet sind) und die Vorschaubilder von Taskleiste und Alt+Tab. Ebenfalls nicht erkennbar ist ein Fenster
+davor, das sich selbst durchsichtig zeichnet (etwa ein Terminal mit Deckkraft unter 100 %): Dahinter kann ein
+privates Fenster durchscheinen.
 
 ## Claude anbinden (MCP-Server)
 

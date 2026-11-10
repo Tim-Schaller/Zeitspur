@@ -5,6 +5,11 @@ Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen
 
 ## 0.4.2
 
+- Private Fenster schwärzen statt Aufnahme anhalten: Fenster auf der Ausschlussliste (InPrivate/Inkognito,
+  Passwortmanager, Banking) werden im Bild schwarz übermalt – liegen sie hinter anderen Fenstern, nur der Teil, der
+  hervorschaut. Der Rest des Bildschirms wird weiter aufgenommen, der Fenstertitel nicht gespeichert. Bisher konnte
+  ein offenes, maximiertes privates Fenster die Aufnahme aller Monitore stundenlang stoppen, obwohl das Symbol
+  „Aufnahme läuft“ zeigte.
 - Texterkennung schont den PC: Nach jedem Bild legt Zeitspur eine Pause ein, sodass die Erkennung dauerhaft nur noch
   etwa ein Drittel eines Prozessorkerns belegt (Einstellung `ocr_throttle`). Im Akkubetrieb ruht sie ganz und
   wird nachgeholt, sobald das Netzteil wieder dran ist (`ocr_pause_on_battery`).

@@ -470,43 +470,163 @@ def top_window_per_monitor(monitors: list[dict]) -> dict[int, WindowInfo]:
     return assign_top_windows(order, monitors, lambda hwnd, rect: _window_info(hwnd, rect=rect))
 
 
-def visible_windows_per_monitor(monitors: list[dict]) -> dict[int, list[WindowInfo]]:
-    """Alle sichtbaren, betitelten Fenster je Monitor (oberstes zuerst).
+GA_ROOTOWNER = 3
 
-    Anders als top_window_per_monitor wird NICHT bei einem Fenster je Monitor gestoppt: ein Fenster, das auf
-    mehreren Monitoren liegt, erscheint bei jedem. So laesst sich die Ausschlussliste gegen jedes sichtbare
-    Fenster pruefen, nicht nur gegen das oberste/fokussierte.
+
+def subtract_rects(rect: tuple, holes) -> list[tuple[int, int, int, int]]:
+    """Rechteck minus Loecher als Liste sich nicht ueberlappender Rechtecke (links, oben, rechts, unten)."""
+    pieces = [tuple(rect)]
+    for hl, ht, hr, hb in holes:
+        rest = []
+        for l, t, r, b in pieces:
+            if hl >= r or hr <= l or ht >= b or hb <= t:     # Loch trifft dieses Stueck nicht
+                rest.append((l, t, r, b))
+                continue
+            if t < ht:
+                rest.append((l, t, r, ht))                    # Streifen oberhalb
+            if hb < b:
+                rest.append((l, hb, r, b))                    # Streifen unterhalb
+            top, bottom = max(t, ht), min(b, hb)
+            if l < hl:
+                rest.append((l, top, hl, bottom))             # links daneben
+            if hr < r:
+                rest.append((hr, top, r, bottom))             # rechts daneben
+        pieces = rest
+        if not pieces:
+            break
+    return pieces
+
+
+def select_excluded_rects(windows, is_excluded, resolve, cover=None) -> list[tuple[int, int, int, int]]:
+    """Rechtecke, die geschwaerzt werden muessen.
+
+    `windows`: (hwnd, rect, title, root_owner) je sichtbarem Fenster, oberstes zuerst (Z-Reihenfolge).
+    Geschwaerzt wird ein Fenster, das selbst ausgeschlossen ist, und jedes Fenster, dessen Besitzer ausgeschlossen
+    ist - Menues, Vorschlagslisten der Adresszeile und Dialoge wie "Speichern unter" sind eigene Fenster, oft ohne
+    Titel, gehoeren aber zum privaten Fenster. `resolve(hwnd, title, rect)` liefert die WindowInfo (title/rect
+    None = selbst ermitteln).
+
+    Liegt ein ausgeschlossenes Fenster hinter anderen, wird nur geschwaerzt, was davon hervorschaut:
+    `cover(hwnd, title)` liefert die Flaeche, die ein Fenster DARUEBER sicher undurchsichtig verdeckt, oder None
+    (dann verdeckt es vorsichtshalber nichts). Ohne `cover` wird das ganze Rechteck geschwaerzt.
     """
-    result: dict[int, list[WindowInfo]] = {m["monitor_id"]: [] for m in monitors}
-    if not IS_WINDOWS or not monitors:
-        return result
-    order: list[tuple[int, tuple]] = []
+    verdict: dict[int, bool] = {}
+    covers: dict[int, tuple | None] = {}
+
+    def excluded(hwnd: int, title: str | None, rect: tuple | None) -> bool:
+        if hwnd not in verdict:
+            verdict[hwnd] = bool(is_excluded(resolve(hwnd, title, rect)))
+        return verdict[hwnd]
+
+    def covered_by(hwnd: int, title: str) -> tuple | None:
+        if hwnd not in covers:
+            covers[hwnd] = cover(hwnd, title) if cover else None
+        return covers[hwnd]
+
+    result: list[tuple[int, int, int, int]] = []
+    for i, (hwnd, rect, title, root) in enumerate(windows):
+        if excluded(hwnd, title, rect) or (root and root != hwnd and excluded(root, None, None)):
+            holes = [c for h, _r, t, _o in windows[:i] if (c := covered_by(h, t)) is not None]
+            result.extend(subtract_rects(rect, holes))
+    return result
+
+
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_LAYERED = 0x00080000
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_MAINWINDOW = 2           # Mica: undurchsichtig, zeigt nur das Hintergrundbild, nie Fenster dahinter
+DWMSBT_TRANSIENTWINDOW = 3      # Acryl: zeigt verschwommen, was dahinter liegt
+DWMSBT_TABBEDWINDOW = 4         # Mica Alt: undurchsichtig wie Mica
+LWA_COLORKEY = 0x1
+LWA_ALPHA = 0x2
+COVER_MARGIN_96 = 10            # abgerundete Ecke (8 px) plus Rand, bei 96 dpi; waechst mit der Skalierung
+
+
+def _cover_rect(hwnd: int, title: str) -> tuple[int, int, int, int] | None:
+    """Flaeche, die dieses Fenster sicher undurchsichtig verdeckt - oder None, wenn das nicht sicher ist.
+
+    Vorsichtig: Nur betitelte, normale Fenster zaehlen. Durchklickbare Fenster, Werkzeugfenster/Flyouts, Acryl-
+    Hintergrund und Fenster mit eigener Form (SetWindowRgn) verdecken nichts. Fenster mit WS_EX_LAYERED koennen
+    Pixel durchsichtig machen und zaehlen nur mit Mica-Hintergrund (der ist undurchsichtig - so zeichnen z. B.
+    Claude und 1Password) und ohne eingestellte Gesamt-Transparenz.
+    Genommen wird der sichtbare Rahmen (ohne die unsichtbaren Raender von GetWindowRect), nach innen verkleinert um
+    die abgerundeten Ecken - am Rand des Fensters davor bleibt so ein schmaler Streifen schwarz.
+    Nicht erkennbar ist ein Fenster, das sich selbst durchsichtig zeichnet (z. B. ein Terminal mit Deckkraft < 100 %).
+    """
+    if not title:
+        return None
+    try:
+        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        if ex_style & (WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW):
+            return None
+        dwm = ctypes.windll.dwmapi
+        backdrop = ctypes.c_int(0)
+        if dwm.DwmGetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop),
+                                     ctypes.sizeof(backdrop)) != 0:
+            backdrop.value = 0
+        if backdrop.value == DWMSBT_TRANSIENTWINDOW:
+            return None
+        if ex_style & WS_EX_LAYERED:
+            if backdrop.value not in (DWMSBT_MAINWINDOW, DWMSBT_TABBEDWINDOW):
+                return None
+            key, alpha, flags = wt.DWORD(0), ctypes.c_ubyte(255), wt.DWORD(0)
+            if _user32.GetLayeredWindowAttributes(hwnd, ctypes.byref(key), ctypes.byref(alpha), ctypes.byref(flags)):
+                if flags.value & LWA_COLORKEY or (flags.value & LWA_ALPHA and alpha.value < 255):
+                    return None
+        gdi = ctypes.windll.gdi32
+        rgn = gdi.CreateRectRgn(0, 0, 0, 0)
+        try:
+            if _user32.GetWindowRgn(hwnd, rgn) != 0:       # 0 = ERROR = keine eigene Fensterform
+                return None
+        finally:
+            gdi.DeleteObject(rgn)
+        frame = wt.RECT()
+        if dwm.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(frame),
+                                     ctypes.sizeof(frame)) != 0:
+            return None
+        dpi = _user32.GetDpiForWindow(hwnd) or 96
+    except (pywintypes.error, OSError, AttributeError):
+        return None
+    m = -(-COVER_MARGIN_96 * dpi // 96)                    # aufrunden
+    rect = (frame.left + m, frame.top + m, frame.right - m, frame.bottom - m)
+    return rect if rect[2] > rect[0] and rect[3] > rect[1] else None
+
+
+def excluded_window_rects(is_excluded) -> list[tuple[int, int, int, int]]:
+    """Bildschirmrechtecke, die geschwaerzt werden muessen: alle sichtbaren Fenster, die `is_excluded(WindowInfo)`
+    erfuellen, samt ihrer Popups - ohne die Teile, die Fenster davor sicher verdecken (siehe _cover_rect).
+
+    Ein verdecktes Fenster zaehlt also mit, soweit es hervorschaut; minimierte und per DWM ausgeblendete Fenster
+    (andere virtuelle Desktops) sind nicht zu sehen und fehlen. GetWindowRect schliesst den unsichtbaren Rahmen
+    ein - am eigenen Rand wird also eher etwas zu viel geschwaerzt als zu wenig.
+    """
+    if not IS_WINDOWS:
+        return []
+    windows: list[tuple[int, tuple, str, int]] = []
 
     def _cb(hwnd, _):
         try:
-            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
-                return True
-            if not win32gui.GetWindowText(hwnd) or _is_cloaked(hwnd):
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd) or _is_cloaked(hwnd):
                 return True
             rect = tuple(win32gui.GetWindowRect(hwnd))
+            if rect[2] <= rect[0] or rect[3] <= rect[1]:
+                return True
+            title = win32gui.GetWindowText(hwnd) or ""
+            root = win32gui.GetAncestor(hwnd, GA_ROOTOWNER) or 0
         except pywintypes.error:
             return True
-        if rect[2] - rect[0] > 0 and rect[3] - rect[1] > 0:
-            order.append((hwnd, rect))
+        windows.append((hwnd, rect, title, root))
         return True
 
     try:
         win32gui.EnumWindows(_cb, None)
     except pywintypes.error:
         pass
-    for hwnd, rect in order:                         # keine Monitor-Vergabe: ein Fenster darf auf mehreren liegen
-        info = None
-        for mon in monitors:
-            if _rect_overlap(rect, mon) > 0:
-                if info is None:
-                    info = _window_info(hwnd, rect=rect)
-                result[mon["monitor_id"]].append(info)
-    return result
+    return select_excluded_rects(windows, is_excluded,
+                                 lambda hwnd, title, rect: _window_info(hwnd, title=title, rect=rect),
+                                 cover=_cover_rect)
 
 
 def monitor_layout() -> tuple[tuple[int, int, int, int], ...]:

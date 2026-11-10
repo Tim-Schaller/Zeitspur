@@ -217,7 +217,7 @@ class TrayIcon:
 
     def update_state(self, state: CaptureState, detail: str = "") -> None:
         label = STATE_LABELS.get(state, state.value)
-        if detail and state == CaptureState.EXCLUDED:
+        if detail and state in (CaptureState.EXCLUDED, CaptureState.RECORDING):   # z. B. "... geschwärzt"
             label = f"{label}: {detail}"
         color = STATE_COLORS.get(state, GREY)
         self._color = color
@@ -246,7 +246,7 @@ class TrayIcon:
         except Exception:
             return "Status: unbekannt"
         text = f"Status: {st['label']}"
-        if st.get("detail") and st["state"] == CaptureState.EXCLUDED.value:
+        if st.get("detail") and st["state"] in (CaptureState.EXCLUDED.value, CaptureState.RECORDING.value):
             text += f" ({st['detail']})"
         return text
 

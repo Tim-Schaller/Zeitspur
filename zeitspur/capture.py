@@ -3,6 +3,8 @@
 Ein Frame wird nur gespeichert, wenn er sich gegenueber dem *zuletzt gespeicherten* Frame desselben
 Monitors ausreichend unterscheidet, das Vordergrundfenster gewechselt hat oder der laufende Block
 zu alt ist. Unveraenderte Frames verlaengern nur ts_end des offenen Eintrags (gepuffert).
+Fenster auf der Ausschlussliste werden im Bild geschwaerzt, bevor es verglichen, gespeichert oder an die
+Texterkennung gegeben wird; ihr Titel wird nicht gespeichert. Der Rest des Bildschirms wird weiter aufgenommen.
 Alle Bildverarbeitung passiert im Speicher; es werden keine Bilddateien geschrieben.
 """
 from __future__ import annotations
@@ -10,12 +12,13 @@ from __future__ import annotations
 import enum
 import io
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 from . import timeutil, winutil
 from .config import Config
@@ -29,6 +32,8 @@ EXTEND_FLUSH_SECONDS = 30
 EXTEND_FLUSH_MAX = 50
 ERROR_LOG_INTERVAL = 60
 WEBP_METHOD = 2              # Kodieraufwand; siehe encode_webp
+EXCLUDED_TITLE = "Ausgeschlossenes Fenster"   # gespeicherter Titel statt des echten eines ausgeschlossenen Fensters
+BLACKED_DETAIL = "ausgeschlossene Fenster geschwärzt"
 
 
 class CaptureState(str, enum.Enum):
@@ -126,6 +131,27 @@ def encode_png_gray(img: Image.Image) -> bytes:
 def shot_to_image(shot) -> Image.Image:
     """mss.ScreenShot (BGRA) -> PIL RGB ohne Python-seitige Konvertierung."""
     return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+
+def black_out(img: Image.Image, mon: dict, rects) -> int:
+    """Schwaerzt im Bild eines Monitors die Teile der Rechtecke (Bildschirmkoordinaten: links, oben, rechts,
+    unten), die auf diesem Monitor liegen. Aendert `img` an Ort und Stelle; liefert die Zahl der Flaechen."""
+    width, height = img.size
+    sx = width / (mon.get("width") or width)
+    sy = height / (mon.get("height") or height)
+    draw = None
+    count = 0
+    for left, top, right, bottom in rects:
+        # nach aussen runden: lieber ein Pixel mehr schwaerzen als eines zu wenig
+        x0 = max(0, math.floor((left - mon["left"]) * sx))
+        y0 = max(0, math.floor((top - mon["top"]) * sy))
+        x1 = min(width, math.ceil((right - mon["left"]) * sx))
+        y1 = min(height, math.ceil((bottom - mon["top"]) * sy))
+        if x1 > x0 and y1 > y0:
+            draw = draw or ImageDraw.Draw(img)
+            draw.rectangle([x0, y0, x1 - 1, y1 - 1], fill=(0, 0, 0))
+            count += 1
+    return count
 
 
 # --------------------------------------------------------------------------- Loop
@@ -250,10 +276,8 @@ class CaptureLoop(threading.Thread):
         if winutil.free_disk_bytes(self.storage.db_path) < self.cfg.min_free_disk_gb * 1024 ** 3:
             self._suspend(CaptureState.NO_DISK, "Aufnahme pausiert, bis wieder Speicherplatz frei ist")
             return
+        # Auch wenn ein ausgeschlossenes Fenster vorn ist, laeuft die Aufnahme weiter - das Fenster wird geschwaerzt.
         fg = self.current_foreground()
-        if fg is not None and self.is_excluded(fg):
-            self._suspend(CaptureState.EXCLUDED, fg.process_name)
-            return
         self._capture_all(fg, now_ms)
         self._maybe_flush()
 
@@ -267,6 +291,13 @@ class CaptureLoop(threading.Thread):
 
     def is_excluded(self, fg: winutil.WindowInfo) -> bool:
         return self._matches_deny(fg.process_name, fg.title)
+
+    def _excluded_rects(self, fg: winutil.WindowInfo | None) -> list[tuple[int, int, int, int]]:
+        """Rechtecke aller gerade sichtbaren ausgeschlossenen Fenster (samt ihrer Menues und Dialoge)."""
+        rects = list(winutil.excluded_window_rects(self.is_excluded))
+        if fg is not None and fg.rect not in rects and self.is_excluded(fg):
+            rects.append(fg.rect)
+        return rects
 
     def _screenshots(self) -> list[tuple[int, dict, Image.Image]]:
         import mss
@@ -302,28 +333,27 @@ class CaptureLoop(threading.Thread):
         return top.get(mon["monitor_id"])
 
     def _capture_all(self, fg: winutil.WindowInfo | None, now_ms: int) -> None:
+        # Ausgeschlossene Fenster VOR und NACH dem Bildschirmfoto ermitteln und beide Lagen schwaerzen: Wird so ein
+        # Fenster genau waehrend der Aufnahme geoeffnet, verschoben oder vergroessert, ist es trotzdem bedeckt.
+        # Mitgezaehlt werden auch verdeckte Fenster - jedes, das irgendwo sichtbar ist, nicht nur das vorderste.
+        hidden = self._excluded_rects(fg)
         frames = self._screenshots()
+        hidden += [r for r in self._excluded_rects(fg) if r not in hidden]
         self.frames_seen += len(frames)
         monitors = [{**mon, "monitor_id": monitor_id} for monitor_id, mon, _ in frames]
         # Oberstes Fenster je Monitor nur ermitteln, wenn ein Monitor das Vordergrundfenster NICHT enthaelt
         need_top = any(not (fg and winutil.point_in_monitor(fg.center, m)) for m in monitors)
         top = winutil.top_window_per_monitor(monitors) if need_top else {}
-        # ALLE sichtbaren Fenster je Monitor fuer die Ausschlusspruefung: eine ausgeschlossene App, die zwar
-        # sichtbar, aber nicht das oberste/fokussierte Fenster ist, soll ihren Monitor trotzdem aussparen.
-        visible = winutil.visible_windows_per_monitor(monitors)
+        blacked = 0
         for monitor_id, mon, img in frames:
             win = self._window_for({**mon, "monitor_id": monitor_id}, fg, top)
             process_name = win.process_name if win else ""
             title = win.title if win else ""
             exe_path = win.exe_path if win else None
-            # Deny-Liste je Monitor: ist IRGENDEIN sichtbares Fenster (oder das repraesentative) ausgeschlossen,
-            # wird der ganze Monitor uebersprungen. Das Vordergrundfenster ist in tick() bereits global geprueft.
-            candidates = list(visible.get(monitor_id, []))
-            if win is not None and win not in candidates:
-                candidates.append(win)
-            if any(c is not fg and self._matches_deny(c.process_name, c.title) for c in candidates):
-                self._close_monitor_block(monitor_id)
-                continue
+            if win is not None and self.is_excluded(win):
+                title = EXCLUDED_TITLE   # Programm bleibt erkennbar, der Titel (Seitenname, Datenbank ...) nicht
+            # Schwaerzen, BEVOR das Bild verglichen, gespeichert oder an die Texterkennung gegeben wird
+            blacked += black_out(img, mon, hidden)
             small = self._diff.prepare(img)
             changed, ratio = self._diff.is_changed(monitor_id, small)
             block = self._blocks.get(monitor_id)
@@ -337,14 +367,7 @@ class CaptureLoop(threading.Thread):
             else:
                 block.ts_end = now_ms
                 self._pending_extend[block.entry_id] = now_ms
-        self._set_state(CaptureState.RECORDING)
-
-    def _close_monitor_block(self, monitor_id: int) -> None:
-        """Schliesst den offenen Block eines Monitors (z. B. weil dort jetzt eine ausgeschlossene App liegt)."""
-        block = self._blocks.pop(monitor_id, None)
-        if block is not None:
-            self._pending_extend[block.entry_id] = max(block.ts_end, self._pending_extend.get(block.entry_id, 0))
-        self._diff.reset(monitor_id)
+        self._set_state(CaptureState.RECORDING, BLACKED_DETAIL if blacked else "")
 
     def _store_frame(self, monitor_id: int, img: Image.Image, small: Image.Image, now_ms: int,
                      process_name: str, title: str, exe_path: str | None) -> None:

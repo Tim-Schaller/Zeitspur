@@ -140,6 +140,8 @@ class TrayIcon:
         self._anim_stop = threading.Event()
         self._anim_wake = threading.Event()
         self._anim_thread: threading.Thread | None = None
+        self._menu_dirty = threading.Event()
+        self._menu_thread: threading.Thread | None = None
         self.ready = threading.Event()
         self._icon = pystray.Icon("Zeitspur", self._image(GREY), "Zeitspur – startet …", menu=Menu(*self._items()))
 
@@ -189,14 +191,17 @@ class TrayIcon:
         icon.visible = True
         self._anim_thread = threading.Thread(target=self._animate_loop, name="tray-anim", daemon=True)
         self._anim_thread.start()
+        self._menu_thread = threading.Thread(target=self._menu_loop, name="tray-menu", daemon=True)
+        self._menu_thread.start()
         self.ready.set()
 
     def stop(self) -> None:
         self._anim_stop.set()
         self._anim_wake.set()
-        thread = self._anim_thread
-        if thread is not None and thread.is_alive():
-            thread.join(1.0)
+        self._menu_dirty.set()
+        for thread in (self._anim_thread, self._menu_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(1.0)
         try:
             self._icon.stop()
         except Exception:
@@ -236,14 +241,23 @@ class TrayIcon:
             self._anim_wake.set()
 
     def refresh_menu(self) -> None:
-        """Menue neu aufbauen: pystray liest Texte, Haken und Sichtbarkeit nur dabei aus (unter Windows nicht bei
-        jedem Oeffnen). Aus jedem Thread aufrufbar."""
-        if not self.ready.is_set():
-            return
-        try:
-            self._icon.update_menu()
-        except Exception:
-            log.debug("Menue-Aktualisierung fehlgeschlagen", exc_info=True)
+        """Menue neu aufbauen lassen: pystray liest Texte, Haken und Sichtbarkeit nur dabei aus (unter Windows nicht
+        bei jedem Oeffnen). Kehrt sofort zurueck - der Aufbau liest die Statistik aus der Datenbank, und die ist
+        waehrend der taeglichen Sicherung minutenlang belegt (11.11.2026: Speichern im Plugin-Browser hing so lange).
+        Aus jedem Thread aufrufbar; mehrere Aufrufe kurz hintereinander ergeben einen Neuaufbau."""
+        self._menu_dirty.set()
+
+    def _menu_loop(self) -> None:
+        while not self._anim_stop.is_set():
+            if not self._menu_dirty.wait(1.0):
+                continue
+            self._menu_dirty.clear()
+            if self._anim_stop.is_set():
+                return
+            try:
+                self._icon.update_menu()
+            except Exception:
+                log.debug("Menue-Aktualisierung fehlgeschlagen", exc_info=True)
 
     def notify(self, message: str, title: str = "Zeitspur") -> None:
         if not getattr(pystray.Icon, "HAS_NOTIFICATION", False):

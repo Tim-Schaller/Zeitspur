@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from pathlib import Path
 
 from .config import data_dir
@@ -36,9 +37,14 @@ def save(plugin_id: str, values: dict[str, str]) -> Path:
     payload = json.dumps({str(k): str(v) for k, v in values.items()}, ensure_ascii=False).encode("utf-8")
     p = path(plugin_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".bin.tmp")
-    tmp.write_bytes(dpapi_protect(payload, _entropy(plugin_id), f"Zeitspur {plugin_id} credentials"))
-    os.replace(tmp, p)
+    # Eigene Zwischendatei je Aufruf: Zwei gleichzeitige Speichervorgaenge (Doppelklick im Plugin-Browser) liessen
+    # sich bei einem festen Namen gegenseitig die Datei unter den Fuessen wegbenennen.
+    tmp = p.with_name(f"{p.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(dpapi_protect(payload, _entropy(plugin_id), f"Zeitspur {plugin_id} credentials"))
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
     return p
 
 

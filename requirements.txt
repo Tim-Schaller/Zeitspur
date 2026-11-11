@@ -11,6 +11,8 @@ PyYAML==6.0.3
 mcp==2.2.0
 cryptography==50.0.1
 truststore==0.10.4
+# Plugin "Langdock": WebSocket-Verbindung zum eigenen Relay
+websockets==17.3
 # Plugin "Kalender per ICS-Link": Kalenderdateien lesen und Serientermine aufloesen
 icalendar==7.3.0
 recurring-ical-events==3.8.2

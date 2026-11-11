@@ -164,6 +164,10 @@ class TrayIcon:
             Menu.SEPARATOR,
             MenuItem(lambda item: self._status_line(), None, enabled=False),
             MenuItem(lambda item: self._stats_line(), None, enabled=False),
+            MenuItem(lambda item: self._langdock_line(), None, enabled=False,
+                     visible=lambda item: self._langdock_installed()),
+            MenuItem("Langdock-Zugang", lambda: app.toggle_langdock(), checked=lambda item: app.langdock_active(),
+                     visible=lambda item: self._langdock_installed()),
             MenuItem("Mit Windows starten", self._toggle_autostart,
                      checked=lambda item: autostart.is_enabled()),
             MenuItem("Log-Ordner öffnen", lambda: app.open_logs()),
@@ -231,6 +235,16 @@ class TrayIcon:
         if self._animate:
             self._anim_wake.set()
 
+    def refresh_menu(self) -> None:
+        """Menue neu aufbauen: pystray liest Texte, Haken und Sichtbarkeit nur dabei aus (unter Windows nicht bei
+        jedem Oeffnen). Aus jedem Thread aufrufbar."""
+        if not self.ready.is_set():
+            return
+        try:
+            self._icon.update_menu()
+        except Exception:
+            log.debug("Menue-Aktualisierung fehlgeschlagen", exc_info=True)
+
     def notify(self, message: str, title: str = "Zeitspur") -> None:
         if not getattr(pystray.Icon, "HAS_NOTIFICATION", False):
             return
@@ -249,6 +263,18 @@ class TrayIcon:
         if st.get("detail") and st["state"] == CaptureState.EXCLUDED.value:
             text += f" ({st['detail']})"
         return text
+
+    def _langdock_installed(self) -> bool:
+        try:
+            return self.app.langdock_installed()
+        except Exception:
+            return False
+
+    def _langdock_line(self) -> str:
+        try:
+            return self.app.langdock_status_line()
+        except Exception:
+            return "Langdock: unbekannt"
 
     def _stats_line(self) -> str:
         try:

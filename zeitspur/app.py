@@ -17,7 +17,7 @@ from dataclasses import fields
 from datetime import date
 from pathlib import Path
 
-from . import __version__, edition, plugins, timeutil, winutil
+from . import __version__, edition, langdock_relay, plugins, timeutil, winutil
 from .capture import STATE_LABELS, CaptureLoop, CaptureState
 from .cleanup import CleanupReport, MaintenanceJob
 from .config import Config, key_path, logs_dir, save_config
@@ -193,6 +193,7 @@ class App:
         try:
             self.tray = TrayIcon(self)
             self._start_thread(self.tray.run, "tray")
+            langdock_relay.MANAGER.on_change = self._langdock_changed
             self._start_thread(self._ipc_loop, "ipc")
             if self.first_run:
                 log.info("Ersteinrichtung: warte auf Eingaben im Fenster")
@@ -311,6 +312,7 @@ class App:
         self.plugin_observer.start()
         aktiv = [p.name for p in plugins.installed(cfg)]
         log.info("Ereignis-Plugins: %s", ", ".join(aktiv) if aktiv else "keine installiert")
+        self._apply_langdock()
         if edition.UPDATE_CHANNEL:
             self._start_updater()
 
@@ -417,6 +419,8 @@ class App:
         """Im MainThread nach Rueckkehr von webview.start()."""
         self.quitting = True
         self.stop_event.set()
+        langdock_relay.MANAGER.on_change = None
+        langdock_relay.MANAGER.stop()
         # Wartende Threads sofort aufwecken, damit sie stop_event sehen (sonst bis zu Intervall-Laenge Haenger)
         for job in (self.maintenance, self.event_sync, self.updater):
             if job is not None:
@@ -489,7 +493,10 @@ class App:
             self.cfg.installed_plugins = [*self.cfg.installed_plugins, plugin.id]
             save_config(self.cfg)
             log.info("Plugin hinzugefuegt: %s", plugin.name)
-        self._ensure_event_sync()
+        if plugin.service:
+            self._apply_langdock()
+        else:
+            self._ensure_event_sync()
         return plugin.describe(self.cfg)
 
     def remove_plugin(self, plugin_id: str) -> dict:
@@ -499,6 +506,8 @@ class App:
         self.cfg.installed_plugins = [p for p in self.cfg.installed_plugins if p != plugin.id]
         save_config(self.cfg)
         plugin.clear_credentials()
+        if plugin.service:
+            self._apply_langdock()
         removed = 0
         if self.storage is not None:
             removed = self.storage.delete_events_of_source(plugin.id)
@@ -510,6 +519,9 @@ class App:
         plugin = plugins.get(plugin_id)
         plugin.save_credentials(values)
         log.info("Zugangsdaten gespeichert: %s", plugin.name)  # bewusst ohne Werte
+        if plugin.service:
+            self._apply_langdock()   # vor dem Test: der prueft die laufende Verbindung
+            return plugin.test_connection(self.cfg)
         message = plugin.test_connection(self.cfg)
         self._ensure_event_sync()
         return message
@@ -528,7 +540,10 @@ class App:
         save_config(cfg)
         self._apply_in_place(cfg)
         log.info("Einstellungen gespeichert: %s", plugin.name)
-        self._ensure_event_sync()   # sofort mit den neuen Einstellungen abgleichen
+        if plugin.service:
+            self._apply_langdock()
+        else:
+            self._ensure_event_sync()   # sofort mit den neuen Einstellungen abgleichen
         return plugin.describe(self.cfg)
 
     def name_place(self, name: str, *, lat=None, lon=None, old_name: str | None = None,
@@ -608,7 +623,51 @@ class App:
         return plugins.get(plugin_id).reveal_credentials()
 
     def clear_plugin_credentials(self, plugin_id: str) -> bool:
-        return plugins.get(plugin_id).clear_credentials()
+        plugin = plugins.get(plugin_id)
+        cleared = plugin.clear_credentials()
+        if plugin.service:
+            self._apply_langdock()
+        return cleared
+
+    # ---- Langdock-Zugang ---------------------------------------------------
+    def _apply_langdock(self) -> None:
+        """Startet, wechselt oder beendet den Langdock-Zugang passend zur Konfiguration."""
+        if self.stop_event.is_set():
+            return
+        try:
+            langdock_relay.MANAGER.apply(self.cfg)
+        except Exception:
+            log.exception("Langdock-Zugang liess sich nicht anwenden")
+
+    def _langdock_changed(self) -> None:
+        if self.tray is not None:
+            self.tray.refresh_menu()
+
+    def langdock_installed(self) -> bool:
+        return langdock_relay.PLUGIN_ID in self.cfg.installed_plugins
+
+    def langdock_active(self) -> bool:
+        return langdock_relay.is_active(self.cfg)
+
+    def langdock_status_line(self) -> str:
+        return "Langdock: " + langdock_relay.MANAGER.status()["text"]
+
+    def set_langdock_active(self, active: bool) -> None:
+        """Schalter im Tray: merkt sich den Zustand in den Plugin-Einstellungen und wendet ihn an."""
+        plugin = plugins.get(langdock_relay.PLUGIN_ID)
+        values = {**plugin.settings(self.cfg), "active": bool(active)}
+        cfg = Config(**self.cfg.to_dict())
+        cfg.plugin_settings = {**cfg.plugin_settings, plugin.id: values}
+        cfg.validate()
+        save_config(cfg)
+        self._apply_in_place(cfg)
+        log.info("Langdock-Zugang %s", "eingeschaltet" if active else "ausgeschaltet")
+        self._apply_langdock()
+
+    def toggle_langdock(self) -> None:
+        # Aus dem Tray-Thread: Beenden einer Verbindung kann einige Sekunden dauern - das Menue soll nicht haengen
+        active = not self.langdock_active()
+        threading.Thread(target=self.set_langdock_active, args=(active,), name="langdock-toggle", daemon=True).start()
 
     def test_plugin(self, plugin_id: str) -> str:
         return plugins.get(plugin_id).test_connection(self.cfg)

@@ -55,7 +55,8 @@ plugin_hidden = ["zeitspur." + m for m in ("credentials", "httpclient", "eventlo
                                            "browser_history", "ics_calendar", "outlook_mail", "git_commits",
                                            "github_activity", "pc_times", "wifi")] \
     + ["recurring_ical_events", "x_wr_timezone", "dateutil.rrule", "win32evtlog", "tzdata"] \
-    + collect_submodules("icalendar") + LOCATION_MODULES
+    + collect_submodules("icalendar") + LOCATION_MODULES \
+    + ["zeitspur.langdock_relay"] + collect_submodules("websockets")   # Langdock-Zugang (WebSocket zum Relay)
 plugin_datas = collect_data_files("tzdata") + collect_data_files("icalendar")
 excludes_common = ["tkinter", "matplotlib", "numpy", "scipy", "pandas", "PyQt5", "PyQt6", "PySide2", "PySide6",
                    "gi", "cefpython3", "IPython", "jupyter", "notebook", "pytest", "PyInstaller"]

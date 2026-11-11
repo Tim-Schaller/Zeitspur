@@ -3,6 +3,12 @@
 Jeder Abschnitt `## <Version>` wird beim Veröffentlichen zu den Release-Notizen auf GitHub und zur Liste
 „Neu in Zeitspur …“ im Update-Hinweis der App (tools/publish_release.ps1; dort höchstens sechs Punkte).
 
+## Unveröffentlicht
+
+- Neues Plugin „Langdock“: Zeitspur lässt sich auch in Langdock fragen. Ein eigenes Relay nimmt die Fragen an,
+  Zeitspur verbindet sich von sich aus dorthin – der PC bleibt von außen unerreichbar. Screenshots nur mit
+  ausdrücklicher Freigabe; im Tray-Menü lässt sich der Zugang jederzeit ausschalten.
+
 ## 0.4.2
 
 - Texterkennung schont den PC: Nach jedem Bild legt Zeitspur eine Pause ein, sodass die Erkennung dauerhaft nur noch

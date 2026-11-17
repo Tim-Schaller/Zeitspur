@@ -180,6 +180,7 @@ Rechtsklick öffnet das Menü:
 | Aktuelle App ausschließen | trägt den Prozess des aktiven Fensters in die Ausschlussliste ein |
 | Letzte 15 Minuten löschen | entfernt alle Einträge der letzten 15 Minuten inklusive Bilder |
 | Status / Statistik | Zustand, Einträge heute, Datenbankgröße, offene OCR-Jobs |
+| Langdock: … / Langdock-Zugang | nur mit dem Plugin „Langdock“: Verbindungsstand zum Relay und Schalter, der den Zugang sofort ein- oder ausschaltet (siehe [Langdock anbinden](#langdock-anbinden-über-ein-eigenes-relay)) |
 | Mit Windows starten | schaltet den Autostart um (Häkchen = aktiv), sofort wirksam |
 | Log-Ordner öffnen | Explorer im Protokollordner |
 | Datenbank komprimieren | vollständiges VACUUM (nur nötig, wenn Sie Platz sofort zurückhaben wollen; das tägliche Aufräumen gibt Platz ohnehin frei) |
@@ -364,6 +365,42 @@ Beispielfragen an Claude: „Was habe ich gestern um 12 Uhr gemacht?“, „Wann
 Kunde XY offen?“, „Welche Programme habe ich am Dienstag am längsten benutzt?“, „Zeig mir den Screenshot zu
 Eintrag 4711.“ Zeitstempel aus `get_activity_at` lassen sich in derselben Unterhaltung mit anderen Quellen
 (z. B. einem Plaud-Connector) abgleichen.
+
+### Langdock anbinden (über ein eigenes Relay)
+
+Langdock startet keine lokalen MCP-Server, sondern ruft sie aus seiner Cloud über eine öffentliche
+HTTPS-Adresse auf. Damit der PC trotzdem nicht von außen erreichbar sein muss, steht dazwischen ein eigenes
+**Relay** (eigener kleiner Server, z. B. ein LXC; Protokoll in `PROTOKOLL.md` des Relay-Repos):
+
+```
+Langdock (Cloud) ──HTTPS /mcp──▶ Relay ◀──wss /agent── Zeitspur (baut die Verbindung selbst auf)
+```
+
+Zeitspur verbindet sich von sich aus mit dem Relay und reicht jede Frage aus Langdock an denselben
+MCP-Server weiter, den auch Claude Desktop startet (`Zeitspur.exe --mcp`, eigener Prozess, nur lesend).
+Langdock sieht dieselben Werkzeuge wie Claude.
+
+Einrichten:
+
+1. Plugin-Browser → **Langdock** (Kategorie „KI-Zugänge“) → Hinzufügen.
+2. **Relay-Adresse** (`wss://<relay>/agent`; ohne Pfad wird `/agent` ergänzt) und den **Agent-Token** des Relays
+   eintragen, dann „Speichern & testen“. Der Token liegt DPAPI-geschützt im Datenordner, nie in `config.yaml`.
+3. In Langdock unter Integrations einen MCP-Server mit der Adresse `https://<relay>/mcp` und dem
+   Langdock-Schlüssel des Relays anlegen – **nur für sich selbst freigeben**, sonst fragen andere mit demselben
+   Schlüssel den eigenen Verlauf ab.
+
+Sperren auf der Seite von Zeitspur, unabhängig von den Einstellungen in Langdock:
+
+* Nur `wss://` mit Zertifikatsprüfung wie Windows; der Token steht nur im Verbindungsheader.
+* Weitergereicht werden nur Werkzeugaufrufe (`tools/call`) und `ping`, alles andere lehnt Zeitspur ab.
+* **Screenshots** nur, wenn im Plugin „Screenshots an Langdock geben“ an ist (Vorgabe: aus). Sonst fehlt
+  `get_screenshot` in der Werkzeugliste, und Aufrufe werden abgewiesen.
+* Im Protokoll (`service.log`) stehen je Abfrage nur Werkzeug, Dauer, Ergebnis und Größe – kein Inhalt.
+* Tray-Menü → **Langdock-Zugang** schaltet sofort ab; der MCP-Prozess wird dabei beendet.
+
+Erreichbar ist Zeitspur nur, solange der PC läuft und Internet hat; sonst bekommt Langdock vom Relay eine klare
+Meldung. Nach Ruhezustand oder Netzwechsel verbindet sich Zeitspur von selbst neu (2 s bis 1 min Abstand, nach
+einem abgelehnten Token alle 10 Minuten).
 
 ## Plugins
 

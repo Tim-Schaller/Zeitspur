@@ -1194,6 +1194,10 @@
     if (!p.available) { statusText = p.unavailable_reason || "Auf diesem PC nicht verfügbar."; statusCls = "off"; }
     else if (!p.installed) statusText = "Nicht hinzugefügt.";
     else if (p.problem) { statusText = "Einrichtung nötig: " + p.problem; statusCls = "warn"; }
+    else if (p.service) {   // Zugang (Langdock): zeigt den Verbindungsstand statt einer Zeitstrahl-Zeile
+      statusText = p.live_status || "Eingerichtet.";
+      statusCls = p.live_state === "connected" ? "ok" : (p.live_state === "off" ? "off" : "warn");
+    }
     else { statusText = `Aktiv – erscheint im Zeitstrahl in der Zeile „${p.lane}“.`; statusCls = "ok"; }
     nodes.push(el("div", { class: "pd-status " + statusCls, text: statusText }));
     nodes.push(el("p", { class: "pd-desc", text: p.description }));
@@ -1215,7 +1219,7 @@
         try {
           await state.api.add_plugin(p.id);
           setPluginMessage(p.id, pluginNeedsInput(p) ? "Hinzugefügt – jetzt unten einrichten."
-            : "Hinzugefügt. Die Ereignisse erscheinen nach dem nächsten Abgleich im Zeitstrahl.");
+            : (p.service ? "Hinzugefügt." : "Hinzugefügt. Die Ereignisse erscheinen nach dem nächsten Abgleich im Zeitstrahl."));
           await reloadPlugins();
         } catch (e) { message.textContent = errMessage(e); add.disabled = false; }
       });
@@ -1263,12 +1267,15 @@
     }
     const remove = el("button", { type: "button", class: "btn danger", text: "Entfernen" });
     remove.addEventListener("click", async () => {
-      if (!confirm(`Plugin „${p.name}“ entfernen?\n\nDie gespeicherten Zugangsdaten und alle Ereignisse dieses ` +
-                   "Plugins werden gelöscht. Erneutes Hinzufügen holt, was die Quelle noch hat, zurück.")) return;
+      const question = p.service
+        ? `Plugin „${p.name}“ entfernen?\n\nDer Zugang wird beendet und die gespeicherten Zugangsdaten werden gelöscht.`
+        : `Plugin „${p.name}“ entfernen?\n\nDie gespeicherten Zugangsdaten und alle Ereignisse dieses ` +
+          "Plugins werden gelöscht. Erneutes Hinzufügen holt, was die Quelle noch hat, zurück.";
+      if (!confirm(question)) return;
       remove.disabled = true;
       try {
         const res = await state.api.remove_plugin(p.id);
-        setPluginMessage(p.id, `Entfernt – ${res.removed_events} Ereignisse gelöscht.`);
+        setPluginMessage(p.id, p.service ? "Entfernt – der Zugang ist beendet." : `Entfernt – ${res.removed_events} Ereignisse gelöscht.`);
         await reloadPlugins();
       } catch (e) { message.textContent = errMessage(e); remove.disabled = false; }
     });

@@ -341,7 +341,7 @@ def test_plugin_bridge_methods_delegate(bridge):
     assert bridge.get_state()["installed_plugins"] == ["dawarich"]
     listed = {p["id"]: p for p in bridge.list_plugins()}
     assert set(listed) == {"outlook", "teams", "teams_local", "ics", "outlook_mail", "calls_local", "notifications",
-                           "browser_history", "git", "github", "pc_times", "wifi", "dawarich",
+                           "browser_history", "git", "github", "pc_times", "wifi", "langdock", "dawarich",
                            "windows_location"}
     assert listed["dawarich"]["installed"] and not listed["teams"]["installed"]
     assert [f["key"] for f in listed["teams"]["setting_fields"]] == ["teams_user_id", "teams_user_names"]

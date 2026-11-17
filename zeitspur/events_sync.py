@@ -55,8 +55,8 @@ class EventSync:
         window_end = timeutil.day_bounds(end)[1]
         ctx = plugins.SyncContext(self.cfg, self.storage, window_start, window_end)
         for plugin in plugins.installed(self.cfg):
-            if plugin.observes or (sources is not None and plugin.id not in sources):
-                continue   # beobachtende Plugins schreiben selbst mit (PluginObserverThread)
+            if plugin.observes or plugin.service or (sources is not None and plugin.id not in sources):
+                continue   # beobachtende Plugins schreiben selbst mit (PluginObserverThread), Zugaenge liefern nichts
             reason = plugin.unavailable_reason() or plugin.not_ready_reason(self.cfg)
             if reason:
                 report.errors.append(f"{plugin.name}: {reason}")
@@ -89,7 +89,7 @@ class EventSync:
 
     def any_enabled(self) -> bool:
         """Gibt es ein installiertes Plugin, das abgerufen werden muss?"""
-        return any(not p.observes for p in plugins.installed(self.cfg))
+        return any(not p.observes and not p.service for p in plugins.installed(self.cfg))
 
 
 class EventSyncThread(threading.Thread):

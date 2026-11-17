@@ -12,6 +12,10 @@ deshalb zugleich die "source" der Ereignisse und darf sich nie aendern.
 
 Bewusst nicht moeglich: Plugins aus fremden Dateien nachladen. Ein Plugin laeuft im selben Prozess, der den
 Datenbankschluessel haelt, und koennte alles lesen. Wer eins ergaenzen will, traegt es hier in PLUGINS ein.
+
+Ausnahme "Zugang" (service = True): ein Plugin, das keine Ereignisse liefert, sondern Zeitspur fuer einen anderen
+Dienst erreichbar macht (Langdock). Es nutzt nur die Einrichtung im Plugin-Browser; Abgleich und Beobachter
+lassen es aus.
 """
 from __future__ import annotations
 
@@ -31,7 +35,7 @@ log = logging.getLogger(__name__)
 
 # Gruppen im Plugin-Browser, in dieser Reihenfolge
 CATEGORIES = ("Kalender & Mail", "Gespräche & Meetings", "Mitteilungen", "Web", "Entwicklung", "PC & Netzwerk",
-              "Orte")
+              "Orte", "KI-Zugänge")
 # Zeilen im Zeitstrahl, in dieser Reihenfolge (eine Zeile erscheint nur, wenn sie an dem Tag Ereignisse hat)
 LANES = ("Termine", "Gespräche", "Mails", "Mitteilungen", "Web", "Entwicklung", "PC", "Orte")
 # Anzeige der Ereignis-Kategorien (Spalte category in calendar_events) - fuer Zeitstrahl und Claude
@@ -145,6 +149,8 @@ class EventPlugin:
     # abholt. Manche zeigen nur den Moment (z. B. "Teams benutzt gerade das Mikrofon") - die beobachten
     # alle paar Sekunden ueber observe() und schreiben selbst mit. Rueckwirkend gibt es dort nichts.
     observes: ClassVar[bool] = False
+    # Zugang statt Quelle: liefert keine Ereignisse (kein fetch/observe), nur Einrichtung im Plugin-Browser
+    service: ClassVar[bool] = False
 
     def expected_errors(self) -> tuple[type[Exception], ...]:
         """Erwartbare Fehler (Netz weg, Dienst lehnt ab): Warnung ohne Stacktrace. Alles andere mit."""
@@ -266,7 +272,7 @@ class EventPlugin:
             "setting_fields": [f.as_dict() for f in self.setting_fields],
             "settings": self.settings(cfg),
             "has_credentials": self.has_credentials(), "requires_credentials": self.requires_credentials,
-            "observes": self.observes,
+            "observes": self.observes, "service": self.service,
             "problem": (unavailable or self.not_ready_reason(cfg)) if installed else None,
         }
 
@@ -1041,6 +1047,82 @@ class WindowsLocationPlugin(EventPlugin):
         storage.delete_events_of_source(SOURCE)
 
 
+# =========================================================================== KI-Zugänge
+
+class LangdockPlugin(EventPlugin):
+    """Zeitspur in Langdock: Die Werkzeuge des MCP-Servers ueber ein eigenes Relay (langdock_relay)."""
+
+    id = "langdock"
+    name = "Langdock"
+    summary = "Zeitspur in Langdock fragen – über dein eigenes Relay, ohne offenen Port am PC."
+    description = ("Langdock kann keine lokalen MCP-Server starten. Dieses Plugin verbindet Zeitspur mit einem eigenen "
+                   "Relay im Internet, das Langdock als MCP-Server einträgt. Zeitspur baut die Verbindung selbst auf, "
+                   "der PC bleibt von außen unerreichbar. Jede Frage aus Langdock beantwortet derselbe MCP-Server, den "
+                   "auch Claude Desktop nutzt – nur lesend, mit denselben Werkzeugen. Erreichbar ist Zeitspur nur, "
+                   "solange der PC läuft und Internet hat. Im Tray-Menü lässt sich der Zugang jederzeit ausschalten.")
+    category = "KI-Zugänge"
+    icon = "🔌"
+    label = "Langdock"
+    color = "#4f46e5"
+    network = "online"
+    account = "token"
+    service = True
+    records = ("Nichts. Zeitspur speichert für dieses Plugin keine Ereignisse. Im Protokoll stehen nur Werkzeug, Dauer "
+               "und Größe jeder Abfrage, nicht ihr Inhalt.")
+    privacy = ("Langdock bekommt die Antworten auf seine Fragen: Programme, Fenstertitel, erkannten Bildschirmtext, "
+               "Termine, Mails, Gespräche und Orte – Screenshots nur, wenn unten erlaubt. Die Antworten laufen über "
+               "dein Relay und liegen danach in der Langdock-Cloud. Gib die Integration in Langdock nur für dich frei, "
+               "sonst können andere mit demselben Schlüssel deinen Verlauf abfragen.")
+    setup_steps = ("Relay einrichten (eigener Server; Protokoll in PROTOKOLL.md des Relay-Repos).",
+                   "Hier die Relay-Adresse und den Agent-Token eintragen und „Speichern & testen“ klicken.",
+                   "In Langdock unter Integrations einen MCP-Server mit der Adresse …/mcp des Relays und dessen "
+                   "Langdock-Schlüssel anlegen – nur für dich freigeben.",
+                   "Ein- und ausschalten geht jederzeit im Tray-Menü unter „Langdock-Zugang“.")
+    credential_fields = (
+        Field("token", "Agent-Token", kind="secret",
+              help="Der Schlüssel, mit dem sich Zeitspur beim Relay anmeldet (AGENT_TOKEN in relay.env) – nicht der "
+                   "Schlüssel, den Langdock benutzt."),
+    )
+    setting_fields = (
+        Field("url", "Relay-Adresse", placeholder="wss://zeitspur.example.de/agent",
+              help="Adresse des Agent-Endpunkts. Ohne Pfad wird /agent ergänzt; https:// geht auch."),
+        Field("screenshots", "Screenshots an Langdock geben", kind="bool", default=False, optional=True,
+              help="Aus: Das Werkzeug get_screenshot fehlt in Langdock, und Aufrufe werden abgewiesen. "
+                   "Screenshots zeigen oft Kundensysteme und Mails im Klartext."),
+        Field("active", "Zugang eingeschaltet", kind="bool", default=True, optional=True,
+              help="Dasselbe wie „Langdock-Zugang“ im Tray-Menü."),
+    )
+
+    def check_settings(self, values: dict[str, Any]) -> None:
+        from .langdock_relay import normalize_url
+        if values.get("url"):
+            values["url"] = normalize_url(values["url"])
+
+    def check_credentials(self, values: dict[str, str]) -> None:
+        token = values.get("token", "").strip()
+        if token and (len(token) < 16 or any(c.isspace() for c in token)):
+            raise ValueError("Der Agent-Token sieht unvollständig aus (mindestens 16 Zeichen, keine Leerzeichen).")
+        values["token"] = token
+
+    def test_connection(self, cfg: "Config") -> str:
+        reason = self.not_ready_reason(cfg)
+        if reason:
+            return f"Nicht bereit: {reason}"
+        from .langdock_relay import MANAGER
+        return MANAGER.status_text(wait_s=15.0)
+
+    def describe(self, cfg: "Config") -> dict:
+        d = super().describe(cfg)
+        from .langdock_relay import MANAGER
+        status = MANAGER.status() if d["installed"] else None
+        d["live_status"] = status["text"] if status else None
+        d["live_state"] = status["state"] if status else None
+        return d
+
+    def fetch(self, ctx: SyncContext, start: date, end: date) -> list[dict]:
+        return []
+
+
 # =========================================================================== Registry
 
 def _registry(locations: bool) -> tuple[EventPlugin, ...]:
@@ -1048,7 +1130,7 @@ def _registry(locations: bool) -> tuple[EventPlugin, ...]:
     plugins: list[EventPlugin] = [
         OutlookPlugin(), TeamsPlugin(), TeamsLocalPlugin(),
         IcsCalendarPlugin(), OutlookMailPlugin(), CallsLocalPlugin(), NotificationsPlugin(),
-        BrowserHistoryPlugin(), GitPlugin(), GitHubPlugin(), PcTimesPlugin(), WifiPlugin(),
+        BrowserHistoryPlugin(), GitPlugin(), GitHubPlugin(), PcTimesPlugin(), WifiPlugin(), LangdockPlugin(),
     ]
     if locations:
         plugins += [DawarichPlugin(), WindowsLocationPlugin()]

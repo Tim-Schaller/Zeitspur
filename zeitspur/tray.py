@@ -140,6 +140,8 @@ class TrayIcon:
         self._anim_stop = threading.Event()
         self._anim_wake = threading.Event()
         self._anim_thread: threading.Thread | None = None
+        self._menu_dirty = threading.Event()
+        self._menu_thread: threading.Thread | None = None
         self.ready = threading.Event()
         self._icon = pystray.Icon("Zeitspur", self._image(GREY), "Zeitspur – startet …", menu=Menu(*self._items()))
 
@@ -164,6 +166,10 @@ class TrayIcon:
             Menu.SEPARATOR,
             MenuItem(lambda item: self._status_line(), None, enabled=False),
             MenuItem(lambda item: self._stats_line(), None, enabled=False),
+            MenuItem(lambda item: self._langdock_line(), None, enabled=False,
+                     visible=lambda item: self._langdock_installed()),
+            MenuItem("Langdock-Zugang", lambda: app.toggle_langdock(), checked=lambda item: app.langdock_active(),
+                     visible=lambda item: self._langdock_installed()),
             MenuItem("Mit Windows starten", self._toggle_autostart,
                      checked=lambda item: autostart.is_enabled()),
             MenuItem("Log-Ordner öffnen", lambda: app.open_logs()),
@@ -185,14 +191,17 @@ class TrayIcon:
         icon.visible = True
         self._anim_thread = threading.Thread(target=self._animate_loop, name="tray-anim", daemon=True)
         self._anim_thread.start()
+        self._menu_thread = threading.Thread(target=self._menu_loop, name="tray-menu", daemon=True)
+        self._menu_thread.start()
         self.ready.set()
 
     def stop(self) -> None:
         self._anim_stop.set()
         self._anim_wake.set()
-        thread = self._anim_thread
-        if thread is not None and thread.is_alive():
-            thread.join(1.0)
+        self._menu_dirty.set()
+        for thread in (self._anim_thread, self._menu_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(1.0)
         try:
             self._icon.stop()
         except Exception:
@@ -231,6 +240,25 @@ class TrayIcon:
         if self._animate:
             self._anim_wake.set()
 
+    def refresh_menu(self) -> None:
+        """Menue neu aufbauen lassen: pystray liest Texte, Haken und Sichtbarkeit nur dabei aus (unter Windows nicht
+        bei jedem Oeffnen). Kehrt sofort zurueck - der Aufbau liest die Statistik aus der Datenbank, und die ist
+        waehrend der taeglichen Sicherung minutenlang belegt (11.11.2026: Speichern im Plugin-Browser hing so lange).
+        Aus jedem Thread aufrufbar; mehrere Aufrufe kurz hintereinander ergeben einen Neuaufbau."""
+        self._menu_dirty.set()
+
+    def _menu_loop(self) -> None:
+        while not self._anim_stop.is_set():
+            if not self._menu_dirty.wait(1.0):
+                continue
+            self._menu_dirty.clear()
+            if self._anim_stop.is_set():
+                return
+            try:
+                self._icon.update_menu()
+            except Exception:
+                log.debug("Menue-Aktualisierung fehlgeschlagen", exc_info=True)
+
     def notify(self, message: str, title: str = "Zeitspur") -> None:
         if not getattr(pystray.Icon, "HAS_NOTIFICATION", False):
             return
@@ -249,6 +277,18 @@ class TrayIcon:
         if st.get("detail") and st["state"] in (CaptureState.EXCLUDED.value, CaptureState.RECORDING.value):
             text += f" ({st['detail']})"
         return text
+
+    def _langdock_installed(self) -> bool:
+        try:
+            return self.app.langdock_installed()
+        except Exception:
+            return False
+
+    def _langdock_line(self) -> str:
+        try:
+            return self.app.langdock_status_line()
+        except Exception:
+            return "Langdock: unbekannt"
 
     def _stats_line(self) -> str:
         try:

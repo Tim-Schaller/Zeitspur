@@ -19,7 +19,7 @@ def test_plugin_ids_sind_stabil():
     """Die Id ist zugleich die source in calendar_events - eine Umbenennung liesse Daten verwaisen."""
     assert [p.id for p in plugins.PLUGINS] == [
         "outlook", "teams", "teams_local", "ics", "outlook_mail", "calls_local", "notifications",
-        "browser_history", "git", "github", "pc_times", "wifi", "dawarich", "windows_location"]
+        "browser_history", "git", "github", "pc_times", "wifi", "langdock", "dawarich", "windows_location"]
 
 
 def test_get_und_display():

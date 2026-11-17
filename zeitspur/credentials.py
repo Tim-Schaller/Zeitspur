@@ -10,12 +10,17 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from pathlib import Path
 
 from .config import data_dir
 
 log = logging.getLogger(__name__)
+
+# os.replace auf dieselbe Zieldatei aus zwei Threads gleichzeitig scheitert unter Windows mit "Zugriff verweigert"
+# (das Ziel ist waehrend des ersten Ersetzens noch geoeffnet) - deshalb immer nur ein Speichervorgang zur Zeit.
+_save_lock = threading.Lock()
 
 ENTROPY = b"Zeitspur-Plugin-credentials-v1"   # darf sich nie aendern, sonst sind gespeicherte Zugangsdaten unlesbar
 _ID = re.compile(r"[a-z][a-z0-9_]{1,40}")
@@ -42,7 +47,8 @@ def save(plugin_id: str, values: dict[str, str]) -> Path:
     tmp = p.with_name(f"{p.name}.{uuid.uuid4().hex}.tmp")
     try:
         tmp.write_bytes(dpapi_protect(payload, _entropy(plugin_id), f"Zeitspur {plugin_id} credentials"))
-        os.replace(tmp, p)
+        with _save_lock:
+            os.replace(tmp, p)
     finally:
         tmp.unlink(missing_ok=True)
     return p

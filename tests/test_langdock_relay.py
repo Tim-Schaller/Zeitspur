@@ -232,6 +232,11 @@ def test_aufrufe_werden_weitergereicht_und_ids_zurueckgesetzt(env):
                 assert body["tool"] == "echo" and body["args"] == {"x": arg}
                 local_ids.add(body["local_id"])
             assert len(local_ids) == 2 and min(local_ids) > 2   # eigene ids: 1 und 2 waren initialize und tools/list
+            # Der Zaehler steigt erst nach dem Senden der Antwort - unter Last kann der Test schneller sein
+            for _ in range(100):
+                if client.status()["calls"] == 2:
+                    break
+                await asyncio.sleep(0.05)
             assert client.status()["calls"] == 2 and client.status()["last_call"]
         finally:
             client.stop()

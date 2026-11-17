@@ -52,7 +52,7 @@ def use_dawarich(monkeypatch, creds, client_cls=None):
 
 def make_events():
     return [CalendarEvent(ext_id="a", ts_start=T(12), ts_end=T(12, 30), subject="Serverumzug",
-                          location="B2", organizer="Anna", attendees="Anna; Tim", category="meeting", extra="{}")]
+                          location="B2", organizer="Anna", attendees="Anna; Max", category="meeting", extra="{}")]
 
 
 # --------------------------------------------------------------------------- nur Installiertes laeuft
@@ -222,7 +222,7 @@ def test_teams_sync_filters_and_persists_cache(storage, monkeypatch):
             checked["r-other"] = False   # Klassifizierung wie im echten fetch
             return [CallEvent(ext_id="r-mine", ts_start=T(12), ts_end=T(12, 5),
                               subject="Teams-Anruf (ausgehend) mit Bob", location="Microsoft Teams",
-                              organizer="Tim", attendees="Bob", category="call",
+                              organizer="Max", attendees="Bob", category="call",
                               extra='{"direction": "outgoing"}')]
 
     use_teams(monkeypatch, CREDS_TEAMS, FakeClient)

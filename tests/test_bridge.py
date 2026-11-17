@@ -287,7 +287,7 @@ def test_assign_series_without_icons_uses_palette_and_neutral(monkeypatch):
 
 def _ev(storage, ts_start, ts_end, subject, source='outlook', category='meeting'):
     storage.replace_events(source, ts_start, ts_end, [{'ext_id': subject, 'ts_start': ts_start, 'ts_end': ts_end,
-        'subject': subject, 'category': category, 'location': 'B2', 'organizer': 'Anna', 'attendees': 'Anna; Tim', 'extra': None}])
+        'subject': subject, 'category': category, 'location': 'B2', 'organizer': 'Anna', 'attendees': 'Anna; Max', 'extra': None}])
 
 
 def test_get_day_includes_events(bridge, storage):
@@ -497,3 +497,10 @@ def test_get_day_zeigt_die_standort_spur_statt_der_rohbelege(bridge, storage):
     assert [(s["kind"], s["label"]) for s in strip] == [("stay", "Büro"), ("trip", "Fahrt"), ("stay", "Zuhause")]
     assert strip[0]["start_label"] == "10:00" and strip[1]["to"] == "Zuhause" and strip[1]["distance_label"] == "4,6 km"
     assert strip[2]["sources"] == ["WLAN „Heimnetz“"]
+
+
+def test_coerce_config_map_home_empty_fields_mean_unset():
+    cfg = coerce_config({"map_home_lat": "", "map_home_lon": " ", "map_home_label": ""})
+    assert cfg.map_home_lat is None and cfg.map_home_lon is None
+    cfg = coerce_config({"map_home_lat": "52.5163", "map_home_lon": "13.3777", "map_home_label": "Büro"})
+    assert (cfg.map_home_lat, cfg.map_home_lon) == (52.5163, 13.3777)

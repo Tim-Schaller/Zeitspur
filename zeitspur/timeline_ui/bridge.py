@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from .. import __version__, autostart, edition, plugins, timeutil
-from ..config import DB_FILE_NAME, Config, ConfigError, logs_dir, save_config
+from ..config import (DB_FILE_NAME, MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM, Config, ConfigError, logs_dir,
+                      save_config)
 from ..storage import OCR_DONE, OCR_FAILED, OCR_PENDING, ReadOnlyStorage
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -218,6 +219,18 @@ def _as_bool(raw: Any) -> bool:
     return bool(raw)
 
 
+def _map_home(cfg: Config) -> dict[str, Any]:
+    """Startausschnitt der Karte; ohne eingestellte Koordinaten die Deutschland-Mitte (kein Ort des Nutzers)."""
+    if cfg.map_home_lat is None or cfg.map_home_lon is None:
+        lat, lon = MAP_DEFAULT_CENTER
+        return {"lat": lat, "lon": lon, "zoom": MAP_DEFAULT_ZOOM, "label": ""}
+    return {"lat": cfg.map_home_lat, "lon": cfg.map_home_lon, "zoom": cfg.map_home_zoom, "label": cfg.map_home_label}
+
+
+# Zahlenfelder, die leer bleiben duerfen (leeres Formularfeld -> None)
+_OPTIONAL_FLOATS = {"map_home_lat", "map_home_lon"}
+
+
 def coerce_config(values: dict[str, Any], base: Config | None = None) -> Config:
     """Formularwerte (Strings/Zahlen/Listen) -> validierte Config. Textareas liefern Listen als Zeilen."""
     cfg = Config() if base is None else Config(**base.to_dict())
@@ -227,7 +240,9 @@ def coerce_config(values: dict[str, Any], base: Config | None = None) -> Config:
         raw = values[f.name]
         default = getattr(cfg, f.name)
         try:
-            if isinstance(default, list):
+            if f.name in _OPTIONAL_FLOATS:
+                value = None if raw is None or str(raw).strip() == "" else float(raw)
+            elif isinstance(default, list):
                 if isinstance(raw, str):
                     value: Any = [line.strip() for line in raw.splitlines() if line.strip()]
                 else:
@@ -335,8 +350,7 @@ class Bridge:
             "map_enabled": bool(app.cfg.map_enabled and edition.LOCATIONS),
             "features": edition.features(),
             "map_tile_url": app.cfg.map_tile_url,
-            "map_home": {"lat": app.cfg.map_home_lat, "lon": app.cfg.map_home_lon,
-                         "zoom": app.cfg.map_home_zoom, "label": app.cfg.map_home_label},
+            "map_home": _map_home(app.cfg),
             "update": app.update_status(),   # None ohne Update-Kanal (eigener Build, Quelltext)
         }
         if info["ready"]:

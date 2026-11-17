@@ -129,3 +129,32 @@ def test_update_idle_minutes_range():
     for bad in (0, 241):
         with _pytest.raises(ConfigError):
             Config(update_idle_minutes=bad).validate()
+
+
+def test_map_home_starts_empty_and_legacy_default_is_cleared(tmp_path):
+    """Ab Werk keine Koordinaten in den Einstellungen - sie saehen aus wie ein echter Ort."""
+    cfg = Config().validate()
+    assert cfg.map_home_lat is None and cfg.map_home_lon is None
+    # Vor 0.4.3 schrieb jedes Speichern die Deutschland-Mitte in die config.yaml - die gilt als "nichts eingestellt"
+    p = tmp_path / "config.yaml"
+    p.write_text("map_home_lat: 51.163\nmap_home_lon: 10.448\nmap_home_zoom: 6\n", encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.map_home_lat is None and cfg.map_home_lon is None
+    save_config(cfg, p)
+    assert load_config(p).map_home_lat is None
+    # eigene Koordinaten bleiben, ebenso die Mitte, wenn sie einen Namen traegt
+    p.write_text("map_home_lat: 52.5163\nmap_home_lon: 13.3777\n", encoding="utf-8")
+    assert load_config(p).map_home_lat == 52.5163
+    p.write_text("map_home_lat: 51.163\nmap_home_lon: 10.448\nmap_home_label: Mitte\n", encoding="utf-8")
+    assert load_config(p).map_home_lat == 51.163
+
+
+@pytest.mark.parametrize("values", [
+    {"map_home_lat": 52.5},                                  # nur eine Koordinate
+    {"map_home_lon": 13.4},
+    {"map_home_label": "Büro"},                              # Name ohne Koordinaten
+    {"map_home_lat": 91.0, "map_home_lon": 13.4},            # ausserhalb
+])
+def test_map_home_invalid_combinations(values):
+    with pytest.raises(ConfigError):
+        Config(**values).validate()

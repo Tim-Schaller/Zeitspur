@@ -187,8 +187,9 @@ def places_from_config(cfg) -> list:
     """Bekannte Orte aus der Konfiguration; der benannte Kartenstartpunkt zaehlt automatisch als Ort."""
     places: list[KnownPlace] = []
     label = (getattr(cfg, "map_home_label", "") or "").strip()
-    if label:
-        places.append(KnownPlace(label, float(cfg.map_home_lat), float(cfg.map_home_lon)))
+    lat, lon = getattr(cfg, "map_home_lat", None), getattr(cfg, "map_home_lon", None)
+    if label and lat is not None and lon is not None:
+        places.append(KnownPlace(label, float(lat), float(lon)))
     for entry in getattr(cfg, "known_places", None) or []:
         try:
             places.append(parse_known_place(entry))

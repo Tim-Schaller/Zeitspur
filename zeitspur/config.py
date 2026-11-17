@@ -21,6 +21,10 @@ DB_FILE_NAME = "zeitspur.db"
 DEFAULT_DB_PATH = f"%LOCALAPPDATA%/Zeitspur/{DB_FILE_NAME}"
 DEFAULT_EXCLUDED_PROCESSES = ["KeePass.*", ".*Banking.*"]
 DEFAULT_EXCLUDED_TITLES = [".*Inkognito.*", ".*Private Browsing.*", ".*InPrivate.*", ".*Privates Fenster.*"]
+# Karte ohne eingestellten Startpunkt: geografische Mitte Deutschlands, Zoom 6 (ganz Deutschland im Blick).
+# Kein persoenlicher Ort - steht deshalb nur hier und nicht als Vorgabe in den Einstellungen.
+MAP_DEFAULT_CENTER = (51.163, 10.448)
+MAP_DEFAULT_ZOOM = 6
 
 
 class ConfigError(ValueError):
@@ -62,10 +66,11 @@ class Config:
     teams_user_names: list[str] = field(default_factory=list)  # Teams-Plugin: Anzeigenamen als Rueckfall
     map_enabled: bool = False             # Karte im Zeitstrahl; laedt Kacheln aus dem Netz (siehe README)
     map_tile_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"  # austauschbar, z. B. eigener Server
-    # Startausschnitt der Karte, wenn (noch) nichts anzuzeigen ist: ab Werk ganz Deutschland. Mit Namen
-    # (map_home_label, etwa "Buero") wird der Punkt zum Bezugspunkt auf der Karte und zum bekannten Ort.
-    map_home_lat: float = 51.163
-    map_home_lon: float = 10.448
+    # Startausschnitt der Karte, wenn (noch) nichts anzuzeigen ist. Ab Werk LEER - in den Einstellungen sollen
+    # keine Koordinaten stehen, die wie ein echter Ort aussehen; die Karte nimmt dann MAP_DEFAULT_CENTER.
+    # Mit Namen (map_home_label, etwa "Buero") wird der Punkt zum Bezugspunkt auf der Karte und zum bekannten Ort.
+    map_home_lat: float | None = None
+    map_home_lon: float | None = None
     map_home_zoom: int = 6
     map_home_label: str = ""
     # Weitere benannte Orte, damit aus Koordinaten Namen werden: "Name;Breite;Laenge[;Radius in m]".
@@ -136,8 +141,11 @@ class Config:
             raise ConfigError("map_tile_url braucht die Platzhalter {z}, {x} und {y}")
         _check_range(self, "backup_count", 0, 30)
         _check_range(self, "backup_max_gb", 0.0, 1000.0)
-        _check_range(self, "map_home_lat", -90.0, 90.0)
-        _check_range(self, "map_home_lon", -180.0, 180.0)
+        if (self.map_home_lat is None) != (self.map_home_lon is None):
+            raise ConfigError("map_home_lat und map_home_lon: entweder beide angeben oder beide leer lassen")
+        if self.map_home_lat is not None:
+            _check_range(self, "map_home_lat", -90.0, 90.0)
+            _check_range(self, "map_home_lon", -180.0, 180.0)
         _check_range(self, "map_home_zoom", 1, 19)
         if not isinstance(self.known_places, list) or not all(isinstance(v, str) for v in self.known_places):
             raise ConfigError("known_places muss eine Liste von Zeichenketten sein")
@@ -153,6 +161,8 @@ class Config:
                     raise ConfigError(f"known_places: {e}") from e
         if not isinstance(self.map_home_label, str):
             raise ConfigError("map_home_label muss eine Zeichenkette sein")
+        if self.map_home_label.strip() and self.map_home_lat is None:
+            raise ConfigError("Der Startpunkt der Karte hat einen Namen, aber keine Koordinaten (Breite und Länge)")
         if not isinstance(self.db_path, str) or not self.db_path.strip():
             raise ConfigError("db_path darf nicht leer sein")
         if not re.fullmatch(r"[a-z_]{3,}(\+[a-z_]{3,})*", self.ocr_language or ""):
@@ -301,6 +311,7 @@ def load_config(path: Path | None = None) -> Config:
         if not isinstance(raw, dict):
             raise ConfigError("config.yaml muss ein Mapping (Schluessel: Wert) enthalten")
         raw = _migrate_plugin_flags(raw)
+        raw = _migrate_map_home(raw)
         known = {f.name for f in fields(Config)}
         for k, v in raw.items():
             if k in known:
@@ -327,6 +338,15 @@ def _migrate_plugin_flags(raw: dict) -> dict:
         if raw["installed_plugins"]:
             log.info("Konfiguration migriert: aktive Quellen werden zu Plugins (%s)",
                      ", ".join(raw["installed_plugins"]))
+    return raw
+
+
+def _migrate_map_home(raw: dict) -> dict:
+    """Vor 0.4.3 stand die Deutschland-Mitte als Vorgabe in map_home_lat/lon und wurde beim Speichern in jede
+    config.yaml geschrieben. Genau dieses Paar (ohne Namen) gilt als "nichts eingestellt" und wird geleert."""
+    if (raw.get("map_home_lat"), raw.get("map_home_lon")) == MAP_DEFAULT_CENTER and not raw.get("map_home_label"):
+        raw = dict(raw)
+        raw["map_home_lat"] = raw["map_home_lon"] = None
     return raw
 
 

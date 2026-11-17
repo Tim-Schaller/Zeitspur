@@ -32,7 +32,7 @@ def test_export_vergangener_tag_mit_ereignissen_programmen_und_ablauf(storage, r
     make_entry(storage, T0, T0 + 30 * MIN, monitor_id=2, process_name="olk.exe", window_title="Posteingang")
     storage.replace_events("outlook", T0 - MIN, T0 + 120 * MIN, [
         {"ext_id": "m1", "ts_start": T0 + 15 * MIN, "ts_end": T0 + 45 * MIN, "subject": "Serverumzug",
-         "category": "meeting", "location": "B2", "organizer": "Anna", "attendees": "Anna; Tim", "extra": None}])
+         "category": "meeting", "location": "B2", "organizer": "Anna", "attendees": "Anna; Max", "extra": None}])
     storage.replace_events("teams", T0 - MIN, T0 + 120 * MIN, [
         {"ext_id": "c1", "ts_start": T0 + 50 * MIN, "ts_end": T0 + 55 * MIN, "subject": "Teams-Anruf mit Bernd",
          "category": "call", "extra": json.dumps({"direction": "outgoing", "video": True})}])
@@ -41,7 +41,7 @@ def test_export_vergangener_tag_mit_ereignissen_programmen_und_ablauf(storage, r
     assert "Exportiert am 10.09.2026 um 08:00 Uhr." in md and "läuft noch" not in md
     assert "Aufgezeichnet von 10:00 bis 10:30 · aktiv 30 min · 2 Bilder auf 2 Monitoren." in md
     assert ("- 10:15–10:45 · Outlook · Besprechung · Serverumzug — Ort: B2 · Organisator: Anna · "
-            "Teilnehmer: Anna; Tim") in md
+            "Teilnehmer: Anna; Max") in md
     assert "- 10:50–10:55 · Anruf (ausgehend) · Teams-Anruf mit Bernd — mit Video" in md   # "Teams" steht im Betreff
     assert "- **olk.exe** – 30 min, 10:00–10:30" in md and "  - Posteingang (30 min)" in md
     assert "### Monitor 1" in md and "- 10:00–10:20 (20 min) · code.exe · a.py" in md
@@ -56,13 +56,13 @@ def test_ereignisse_ohne_doppelte_angaben(storage, reader):
          "category": "conversation", "location": "Zoom", "extra": json.dumps({"app": "Zoom", "video": True})}])
     storage.replace_events("outlook_mail", T0 - MIN, T0 + 120 * MIN, [
         {"ext_id": "x1", "ts_start": T0 + 60 * MIN, "ts_end": T0 + 60 * MIN, "subject": "Von Max: Rechnung 4711",
-         "category": "mail_received", "organizer": "Max", "attendees": "Tim; Erika", "extra": None}])
+         "category": "mail_received", "organizer": "Max", "attendees": "Max; Erika", "extra": None}])
     storage.replace_events("pc_times", T0 - 600 * MIN, T0 + 120 * MIN, [
         {"ext_id": "p1", "ts_start": T0 - 14 * 60 * MIN, "ts_end": T0 - 30 * MIN, "subject": "PC an (Start → Standby)",
          "category": "pc_on", "extra": None}])
     md = _export(reader)
     assert "- 10:00–10:40 · Gespräch: Zoom mit Video\n" in md
-    assert "- 11:00 · Mail · Mail empfangen · Von Max: Rechnung 4711 — An: Tim; Erika\n" in md
+    assert "- 11:00 · Mail · Mail empfangen · Von Max: Rechnung 4711 — An: Max; Erika\n" in md
     assert "- 08.09. 20:00–09:30 · PC an (Start → Standby)\n" in md     # beginnt am Vortag: mit Datum
 
 

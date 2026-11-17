@@ -257,8 +257,8 @@ mit Ausnahme der gekennzeichneten Werte; manuelle Änderungen an der Datei greif
 | `teams_user_names` | `[]` | Teams-Plugin: Anzeigenamen als Rückfall, falls in einem Anruf keine Objekt-Id, aber ein Name steht |
 | `map_enabled` | `false` | Karte im Tagesablauf der Orte; lädt dann Kartenkacheln aus dem Netz (siehe [Karte](#karte-openstreetmap)) |
 | `map_tile_url` | OSM | Kachel-Adresse (https, mit `{z}/{x}/{y}`); auf eigenen Server umbiegbar |
-| `map_home_lat` / `map_home_lon` | Mitte Deutschlands | Startpunkt der Karte, wenn nichts anzuzeigen ist |
-| `map_home_zoom` | `6` | Zoomstufe des Startpunkts (1–19) |
+| `map_home_lat` / `map_home_lon` | leer | Startpunkt der Karte, wenn nichts anzuzeigen ist; leer ⇒ Blick auf ganz Deutschland |
+| `map_home_zoom` | `6` | Zoomstufe des Startpunkts (1–19); gilt nur mit eigenen Koordinaten |
 | `map_home_label` | `""` | Name des Startpunkts (etwa „Büro“); mit Namen erscheint er als Bezugspunkt und zählt als bekannter Ort |
 | `known_places` | `[]` | weitere benannte Orte `Name;Breite;Länge[;Radius]`, je Zeile |
 | `events_sync_minutes` | `15` | Intervall, in dem Plugins mit eigener Historie abgeglichen werden (Kalender, Mails, Teams …) |
@@ -772,8 +772,8 @@ Technisch:
 * Die Kachel-Adresse steht in `map_tile_url` und lässt sich auf einen **eigenen Kachel-Server** umbiegen –
   dann verlässt auch dafür nichts Ihr Netz. Sie muss `https` sein und `{z}/{x}/{y}` enthalten.
 * Die Namensnennung „© OpenStreetMap-Mitwirkende“ wird eingeblendet; das ist bei OSM-Daten (ODbL) Pflicht.
-* **Startpunkt:** Ohne Aufenthalte öffnet die Karte beim eingestellten Startpunkt – ab Werk mit Blick auf ganz
-  Deutschland. Über `map_home_lat`, `map_home_lon`, `map_home_zoom` und `map_home_label` lässt sich ein eigener
+* **Startpunkt:** Ohne Aufenthalte öffnet die Karte beim eingestellten Startpunkt – ab Werk sind die Felder leer
+  und die Karte zeigt ganz Deutschland. Über `map_home_lat`, `map_home_lon`, `map_home_zoom` und `map_home_label` lässt sich ein eigener
   Bezugspunkt setzen, etwa das Büro; mit Namen erscheint er als blauer Punkt.
 
 **Ortsnamen ohne fremden Dienst:** Namen kommen aus Ihren bekannten Orten, Ihren WLAN-Zuordnungen und dem

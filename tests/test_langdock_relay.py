@@ -1,5 +1,5 @@
 """Langdock-Zugang: Relay-Client gegen ein nachgebautes Relay (wss mit Testzertifikat) und einen kleinen
-MCP-Server als Kindprozess. Geprueft wird der Vertrag aus PROTOKOLL.md (Version 1) und die Sperren des Clients."""
+MCP-Server als Kindprozess. Geprueft wird der Vertrag aus docs/langdock-relay-prompt.md (Version 1) und die Sperren des Clients."""
 import asyncio
 import datetime
 import json

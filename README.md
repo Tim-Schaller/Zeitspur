@@ -370,11 +370,17 @@ Eintrag 4711.“ Zeitstempel aus `get_activity_at` lassen sich in derselben Unte
 
 Langdock startet keine lokalen MCP-Server, sondern ruft sie aus seiner Cloud über eine öffentliche
 HTTPS-Adresse auf. Damit der PC trotzdem nicht von außen erreichbar sein muss, steht dazwischen ein eigenes
-**Relay** (eigener kleiner Server, z. B. ein LXC; Protokoll in `PROTOKOLL.md` des Relay-Repos):
+**Relay** (eigener kleiner Server, z. B. ein VPS oder LXC):
 
 ```
 Langdock (Cloud) ──HTTPS /mcp──▶ Relay ◀──wss /agent── Zeitspur (baut die Verbindung selbst auf)
 ```
+
+Das Relay ist nicht Teil von Zeitspur, jeder betreibt sein eigenes – durch es laufen die Antworten mit
+Bildschirmtext, Mails und Orten. Zum Aufsetzen gibt es einen fertigen Auftrag für Claude (oder einen anderen
+KI-Assistenten mit Zugriff auf den Server): [docs/langdock-relay-prompt.md](docs/langdock-relay-prompt.md). Er
+enthält den vollständigen Protokoll-Vertrag (Version 1), die Sicherheitsvorgaben und die Tests. Selbst mitbringen
+muss man nur einen Server mit öffentlicher Adresse und einen Hostnamen.
 
 Zeitspur verbindet sich von sich aus mit dem Relay und reicht jede Frage aus Langdock an denselben
 MCP-Server weiter, den auch Claude Desktop startet (`Zeitspur.exe --mcp`, eigener Prozess, nur lesend).

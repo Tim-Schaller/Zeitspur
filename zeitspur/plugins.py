@@ -1073,7 +1073,8 @@ class LangdockPlugin(EventPlugin):
                "Termine, Mails, Gespräche und Orte – Screenshots nur, wenn unten erlaubt. Die Antworten laufen über "
                "dein Relay und liegen danach in der Langdock-Cloud. Gib die Integration in Langdock nur für dich frei, "
                "sonst können andere mit demselben Schlüssel deinen Verlauf abfragen.")
-    setup_steps = ("Relay einrichten (eigener Server; Protokoll in PROTOKOLL.md des Relay-Repos).",
+    setup_steps = ("Relay einrichten (eigener Server; Anleitung zum Aufsetzen: docs/langdock-relay-prompt.md "
+                   "im Zeitspur-Repo).",
                    "Hier die Relay-Adresse und den Agent-Token eintragen und „Speichern & testen“ klicken.",
                    "In Langdock unter Integrations einen MCP-Server mit der Adresse …/mcp des Relays und dessen "
                    "Langdock-Schlüssel anlegen – nur für dich freigeben.",

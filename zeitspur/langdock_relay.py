@@ -1,7 +1,7 @@
 """Langdock-Zugang: Zeitspur beantwortet MCP-Aufrufe aus Langdock ueber ein eigenes Relay.
 
 Langdock startet keine lokalen MCP-Server, sondern ruft sie aus seiner Cloud ueber eine oeffentliche
-HTTPS-Adresse auf. Dazwischen steht ein eigenes Relay (Protokoll: PROTOKOLL.md im Relay-Repo, Version 1).
+HTTPS-Adresse auf. Dazwischen steht ein eigenes Relay (Protokoll Version 1: docs/langdock-relay-prompt.md).
 Zeitspur baut die Verbindung selbst auf - eine WebSocket-Verbindung nach aussen, der PC ist nie von aussen
 erreichbar - und reicht jeden Aufruf an denselben MCP-Server weiter, den auch Claude Desktop startet:
 `Zeitspur.exe --mcp`, nur lesend, als eigener Prozess.
